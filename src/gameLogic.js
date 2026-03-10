@@ -129,6 +129,7 @@ function getTrumpOrder(trumpSuit, trumpNumber) {
   // Returns ordered trump "slots" from lowest to highest
   // Each slot is a key
   const order = [];
+  if (!trumpSuit || !trumpNumber) return order;
   // Regular trump suit cards (by rank, excluding trump number)
   for (const rank of RANKS) {
     if (rank !== trumpNumber) {
@@ -506,6 +507,7 @@ function findTractors(sortedEntries, minSize, leadSuit, trumpSuit, trumpNumber) 
 // Decompose cards into sub-components with max-min tier optimization.
 // Returns array of { type, cards } sorted highest tier first.
 export function decomposeCombo(cards, trumpSuit, trumpNumber) {
+  if (!cards || cards.length === 0) return [];
   // Group cards by key
   const groups = {};
   for (const card of cards) {
