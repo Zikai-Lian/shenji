@@ -4,7 +4,8 @@ import {
   buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
   detectCombo, trickWinner, countPoints, cardPoints,
   attackerLevelGain, defenderLevelGain, kittyMultiplier,
-  canDeclareTrump, getTrumpSuitFromDeclaration, validateFollow, LEVELS, SUITS, RANKS
+  canDeclareTrump, getTrumpSuitFromDeclaration, validateFollow,
+  decomposeCards, findMandatoryChallenger, LEVELS, SUITS, RANKS
 } from './gameLogic';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -378,47 +379,46 @@ export default function App() {
       if (followErr) return setError(followErr);
     }
 
-    // If leading with a mixed/big combo, enter challenge phase
-    if (isLeading && (combo.type === 'mixed' || selectedCards.length > 1)) {
-      // counterclockwise order from leader: (mySeat+3)%4, (mySeat+2)%4, (mySeat+1)%4
-      const challengeOrder = [
-        (mySeat + 3) % 4,
-        (mySeat + 2) % 4,
-        (mySeat + 1) % 4,
-      ];
+    // If leading with multiple cards, auto-detect if anyone must challenge
+    if (isLeading && selectedCards.length > 1) {
       const newHand = myHand.filter(c => !selectedIds.includes(c.id));
       const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-      await updateRoom(room.id, {
-        game: {
-          ...game,
-          hands: newHands,
-          phase: 'challenge',
-          challenge: {
-            leaderSeat: mySeat,
-            leaderName: room.players[mySeat].name,
-            playedCards: selectedCards,
-            challengeOrder,          // who gets to challenge in order
-            challengeIdx: 0,         // which index in challengeOrder is up
-            challengerSeat: challengeOrder[0], // first person counterclockwise
-            originalHand: myHand,    // in case we need to return cards
-          },
-          log: [...(game.log || []), `${room.players[mySeat].name} leads ${selectedCards.length} cards — challenge phase begins.`],
-        }
-      });
-      setSelectedIds([]);
-      return;
+      // Check counterclockwise for a forced challenger
+      const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
+      if (challengeResult) {
+        const { challengerSeat, components, beatableIndices } = challengeResult;
+        await updateRoom(room.id, {
+          game: {
+            ...game,
+            hands: newHands,
+            phase: 'challenge',
+            challenge: {
+              leaderSeat: mySeat,
+              leaderName: room.players[mySeat].name,
+              playedCards: selectedCards,
+              components,
+              beatableIndices,
+              challengerSeat,
+            },
+            log: [...(game.log || []), `${room.players[mySeat].name} leads ${selectedCards.length} cards — ${room.players[challengerSeat]?.name} must challenge!`],
+          }
+        });
+        setSelectedIds([]);
+        return;
+      }
+      // Nobody can challenge — commit play directly
     }
 
     await commitPlay(selectedCards, isLeading);
   };
 
-  // Challenger says they can beat a card — they pick which sub-combo to keep
+  // Challenger picks which sub-combo the leader must keep
   const handleChallenge = async (keptCombo) => {
     if (!game.challenge) return;
     if (game.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
+    if (keptCombo.length === 0) return setError("Select which cards the leader must keep");
 
-    const { leaderSeat, playedCards, originalHand } = game.challenge;
-    // Return unkept cards to leader's hand
+    const { leaderSeat, playedCards } = game.challenge;
     const keptIds = new Set(keptCombo.map(c => c.id));
     const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
     const leaderHand = [...(game.hands[leaderSeat] || []), ...returnedCards];
@@ -432,46 +432,13 @@ export default function App() {
         challenge: null,
         currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players[leaderSeat].name }],
         currentTurn: (leaderSeat + 1) % 4,
-        log: [...(game.log || []), `${room.players[mySeat].name} challenges! Leader must play ${keptCombo.length} cards.`],
+        log: [...(game.log || []), `${room.players[mySeat].name} challenges! ${room.players[leaderSeat].name} must play ${keptCombo.length} cards.`],
       }
     });
     setSelectedIds([]);
   };
 
-  // Pass on challenge — next counterclockwise player gets to challenge
-  const handlePassChallenge = async () => {
-    if (!game.challenge) return;
-    if (game.challenge.challengerSeat !== mySeat) return;
-
-    const { challengeOrder, challengeIdx, playedCards, leaderSeat } = game.challenge;
-    const nextIdx = challengeIdx + 1;
-
-    if (nextIdx >= challengeOrder.length) {
-      // Nobody challenged — commit the play as-is
-      await updateRoom(room.id, {
-        game: {
-          ...game,
-          phase: 'playing',
-          challenge: null,
-          currentTrick: [{ playerIdx: leaderSeat, cards: playedCards, playerName: room.players[leaderSeat].name }],
-          currentTurn: (leaderSeat + 1) % 4,
-          log: [...(game.log || []), `No challenge — ${room.players[leaderSeat].name}'s play stands.`],
-        }
-      });
-    } else {
-      await updateRoom(room.id, {
-        game: {
-          ...game,
-          challenge: {
-            ...game.challenge,
-            challengeIdx: nextIdx,
-            challengerSeat: challengeOrder[nextIdx],
-          }
-        }
-      });
-    }
-    setSelectedIds([]);
-  };
+  const handlePassChallenge = async () => {}; // kept for compatibility, not used
 
   const commitPlay = async (cards, isLeading) => {
     const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
@@ -619,7 +586,7 @@ export default function App() {
           onDeclareTrump={handleDeclareTrump} onTakeKitty={handleTakeKitty}
           onDiscardKitty={handleDiscardKitty} onPlayCards={handlePlayCards}
           onNextRound={handleNextRound} playerId={playerId}
-          onChallenge={handleChallenge} onPassChallenge={handlePassChallenge}
+          onChallenge={handleChallenge}
         />
       )}
     </div>
@@ -627,8 +594,11 @@ export default function App() {
 }
 
 // ── Game Screen ───────────────────────────────────────────────────────────────
-function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onPassChallenge }) {
+function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge }) {
+  const [selectedCompIdx, setSelectedCompIdx] = React.useState(null);
   const isMyTurn = game.currentTurn === mySeat;
+  React.useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
+
   const isKittyHolder = game.kittyHolder === mySeat;
   const attackTeamName = `Team ${game.attackingTeam === 0 ? 'A' : 'B'}`;
   const myTeamAttacking = myTeam === game.attackingTeam;
@@ -750,64 +720,70 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         </div>
       )}
 
-      {/* Challenge Phase */}
+      {/* Challenge Phase — mandatory challenger picks which sub-combo leader keeps */}
       {game.phase === 'challenge' && game.challenge && (() => {
         const ch = game.challenge;
         const isChallenger = ch.challengerSeat === mySeat;
         const isLeader = ch.leaderSeat === mySeat;
         const challName = room.players[ch.challengerSeat]?.name;
-        // Challenger selects from the LEADER's played cards to decide what sub-combo to keep
-        const selectedLeaderCardIds = selectedIds.filter(id => ch.playedCards.some(c => c.id === id));
-        const selectedLeaderCards = ch.playedCards.filter(c => selectedLeaderCardIds.includes(c.id));
+
+        const components = ch.components || [];
 
         return (
           <div style={{ background: SURFACE, border: `2px solid ${RED}66`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-            <div style={{ color: RED, fontWeight: 700, marginBottom: '8px' }}>⚔ Challenge Phase — {challName}'s turn</div>
+            <div style={{ color: RED, fontWeight: 700, marginBottom: '8px' }}>
+              ⚔ Challenge — {challName} must pick which part of {ch.leaderName}'s play to keep
+            </div>
 
-            {/* Leader's played cards — clickable for challenger to pick sub-combo */}
+            {/* Show decomposed sub-combos — challenger clicks one to keep */}
             <div style={{ marginBottom: '12px' }}>
-              <div style={{ fontSize: '12px', color: MUTED, marginBottom: '6px' }}>
-                {ch.leaderName} played ({ch.playedCards.length} cards):
+              <div style={{ fontSize: '12px', color: MUTED, marginBottom: '8px' }}>
+                {ch.leaderName}'s play broken into components (select one to keep):
               </div>
-              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                {ch.playedCards.map(c => (
-                  <PlayingCard
-                    key={c.id} card={c} small
-                    selected={isChallenger && selectedIds.includes(c.id)}
-                    onClick={isChallenger ? () => toggleCard(c.id) : undefined}
-                  />
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {components.map((comp, i) => (
+                  <div
+                    key={i}
+                    onClick={isChallenger ? () => setSelectedCompIdx(i === selectedCompIdx ? null : i) : undefined}
+                    style={{
+                      border: `2px solid ${selectedCompIdx === i ? GOLD : '#555'}`,
+                      borderRadius: '8px', padding: '8px',
+                      background: selectedCompIdx === i ? '#2a2500' : SURFACE,
+                      cursor: isChallenger ? 'pointer' : 'default',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
+                    }}
+                  >
+                    <div style={{ fontSize: '10px', color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {comp.type.replace('_', ' ')}
+                    </div>
+                    <div style={{ display: 'flex', gap: '2px' }}>
+                      {comp.cards.map(c => <PlayingCard key={c.id} card={c} small />)}
+                    </div>
+                  </div>
                 ))}
               </div>
-              {isChallenger && (
-                <div style={{ fontSize: '11px', color: MUTED, marginTop: '6px' }}>
-                  Tap the cards above you want the leader to keep (the sub-combo you can beat the rest of)
-                </div>
-              )}
             </div>
 
             {isChallenger && (
-              <>
-                <button
-                  style={S.btn(selectedLeaderCards.length > 0 ? RED : '#444')}
-                  onClick={() => onChallenge(selectedLeaderCards)}
-                  disabled={selectedLeaderCards.length === 0}
-                >
-                  Challenge — Force leader to play only these {selectedLeaderCards.length} cards
-                </button>
-                <button style={{ ...S.btn('#555'), marginTop: '4px' }} onClick={onPassChallenge}>
-                  Pass — I can't beat any of it
-                </button>
-              </>
+              <button
+                style={S.btn(selectedCompIdx !== null ? RED : '#444')}
+                onClick={() => selectedCompIdx !== null && onChallenge(components[selectedCompIdx].cards)}
+                disabled={selectedCompIdx === null}
+              >
+                {selectedCompIdx !== null
+                  ? `Force leader to keep only the ${components[selectedCompIdx].type.replace('_',' ')} (${components[selectedCompIdx].cards.length} cards)`
+                  : 'Select a sub-combo above to keep'}
+              </button>
             )}
 
             {!isChallenger && !isLeader && (
-              <div style={{ color: MUTED, fontSize: '13px' }}>
-                Waiting for {challName} to challenge or pass...
+              <div style={{ color: MUTED, fontSize: '13px', marginTop: '8px' }}>
+                Waiting for {challName} to pick which part to keep...
               </div>
             )}
             {isLeader && (
-              <div style={{ color: MUTED, fontSize: '13px' }}>
-                Waiting for opponents to challenge your play...
+              <div style={{ color: MUTED, fontSize: '13px', marginTop: '8px' }}>
+                {challName} is choosing which component of your play to keep...
               </div>
             )}
           </div>
