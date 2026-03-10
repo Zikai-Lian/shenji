@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, createRoom, joinRoom, updateRoom, subscribeToRoom } from './supabase';
 import {
-  buildDecks, dealCards, isTrump, trumpRank, suitRank,
+  buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
   detectCombo, trickWinner, countPoints, cardPoints,
   attackerLevelGain, defenderLevelGain, kittyMultiplier,
   canDeclareTrump, getTrumpSuitFromDeclaration, LEVELS, SUITS, RANKS
@@ -180,23 +180,27 @@ export default function App() {
 
   const handleStartGame = async () => {
     const decks = buildDecks();
-    const { hands, kitty } = dealCards(decks);
+    const { sequence, kitty } = dealCardsSequential(decks);
     const initialGame = {
-      phase: 'dealing', // dealing | kitty | playing | round_end
-      hands,
+      phase: 'dealing',
+      hands: [[], [], [], []],
+      dealSequence: sequence,   // full sequence of {seat, card}
+      dealIndex: 0,             // how many cards have been dealt so far
+      dealComplete: false,
       kitty,
       kittyHolder: 0,
       trumpDeclaration: null,
       trumpSuit: null,
-      trumpNumber: LEVELS[0], // '2'
+      trumpNumber: LEVELS[0],
+      firstCardSuit: sequence[0]?.card?.suit || '♠', // fallback trump
       currentTrick: [],
       tricks: [],
-      scores: [0, 0], // [team0, team1]
-      levels: [0, 0], // index into LEVELS array
+      scores: [0, 0],
+      levels: [0, 0],
       attackingTeam: 0,
       currentTurn: 0,
       selectedCards: [[], [], [], []],
-      log: [],
+      log: ['Dealing cards...'],
       roundNum: 1,
     };
     await updateRoom(room.id, { state: 'game', game: initialGame });
@@ -204,6 +208,49 @@ export default function App() {
 
   // ── Game Actions ─────────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState([]);
+  const dealTimerRef = useRef(null);
+
+  // ── Auto-deal animation ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!game || game.phase !== 'dealing' || game.dealComplete) return;
+    if (game.dealIndex >= (game.dealSequence?.length || 0)) {
+      // All cards dealt — check kitty for trump
+      if (!game.trumpSuit) {
+        const trumpNum = game.trumpNumber;
+        let resolvedSuit = null;
+        // Check kitty one by one for trump number
+        for (const card of (game.kitty || [])) {
+          if (card.rank === trumpNum && card.suit !== 'JOKER') {
+            resolvedSuit = card.suit;
+            break;
+          }
+        }
+        // Fallback to first card dealt
+        if (!resolvedSuit) resolvedSuit = game.firstCardSuit;
+        if (mySeat === 0) { // host resolves this
+          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, dealComplete: true, log: [...(game.log||[]), `No trump declared — trump suit set to ${resolvedSuit} automatically.`] } });
+        }
+      } else {
+        if (mySeat === 0) {
+          updateRoom(room.id, { game: { ...game, dealComplete: true } });
+        }
+      }
+      return;
+    }
+
+    // Only host drives the deal timer to avoid race conditions
+    if (mySeat !== 0) return;
+
+    dealTimerRef.current = setTimeout(async () => {
+      const seq = game.dealSequence;
+      const idx = game.dealIndex;
+      const { seat, card } = seq[idx];
+      const newHands = game.hands.map((h, i) => i === seat ? [...h, card] : h);
+      await updateRoom(room.id, { game: { ...game, hands: newHands, dealIndex: idx + 1 } });
+    }, 1000);
+
+    return () => clearTimeout(dealTimerRef.current);
+  }, [game?.dealIndex, game?.phase, game?.dealComplete]);
 
   const toggleCard = (cardId) => {
     setSelectedIds(prev =>
@@ -343,14 +390,18 @@ export default function App() {
     }
 
     const decks = buildDecks();
-    const { hands, kitty } = dealCards(decks);
+    const { sequence, kitty } = dealCardsSequential(decks);
     const newKittyHolder = (game.kittyHolder + (r.defScore >= 120 ? 1 : 2)) % 4;
 
     await updateRoom(room.id, {
       game: {
         ...game,
         phase: 'dealing',
-        hands,
+        hands: [[], [], [], []],
+        dealSequence: sequence,
+        dealIndex: 0,
+        dealComplete: false,
+        firstCardSuit: sequence[0]?.card?.suit || '♠',
         kitty,
         kittyHolder: newKittyHolder,
         trumpDeclaration: null,
@@ -503,18 +554,36 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       {/* Phase-specific actions */}
       {game.phase === 'dealing' && (
         <div style={{ background: SURFACE, border: `1px solid ${GOLD}44`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-          <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>Trump Declaration Phase</div>
-          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
-            Select cards from your hand to declare trump. Need 2+ cards (not 1 joker).
-            {game.trumpDeclaration && ` Current: ${room.players[game.trumpDeclaration.playerIdx]?.name} declared ${game.trumpSuit || 'no suit'}.`}
+          <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>
+            {game.dealComplete ? 'Dealing Complete — Declare Trump' : `Dealing Cards... (${game.dealIndex || 0}/${game.dealSequence?.length || 156})`}
           </div>
-          <button style={S.btn(GOLD)} onClick={onDeclareTrump}>
+
+          {/* Progress bar */}
+          {!game.dealComplete && (
+            <div style={{ height: '4px', background: BORDER, borderRadius: '2px', marginBottom: '12px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', background: GOLD, borderRadius: '2px', width: `${((game.dealIndex || 0) / (game.dealSequence?.length || 156)) * 100}%`, transition: 'width 0.8s ease' }} />
+            </div>
+          )}
+
+          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
+            {game.trumpDeclaration
+              ? `${room.players[game.trumpDeclaration.playerIdx]?.name} declared trump${game.trumpSuit ? ` (${game.trumpSuit})` : ' (no suit — jokers)'}. Someone can override with more cards.`
+              : 'Select 2+ cards of the same rank to declare trump. You can declare any time during dealing.'}
+          </div>
+
+          <button style={S.btn(selectedCards.length >= 2 ? GOLD : '#333')} onClick={onDeclareTrump}>
             Declare Trump ({selectedCards.length} selected)
           </button>
-          {isKittyHolder && (
-            <button style={S.btn(GREEN)} onClick={onTakeKitty}>
-              Take Kitty & End Dealing
+
+          {isKittyHolder && game.dealComplete && (
+            <button style={{ ...S.btn(GREEN), marginTop: '8px' }} onClick={onTakeKitty}>
+              Take Kitty →
             </button>
+          )}
+          {!isKittyHolder && game.dealComplete && (
+            <div style={{ color: MUTED, fontSize: '12px', textAlign: 'center', marginTop: '8px' }}>
+              Waiting for {room.players[game.kittyHolder]?.name} to take the kitty...
+            </div>
           )}
         </div>
       )}
