@@ -39,7 +39,7 @@ const S = {
     transition: 'all 0.1s', transform: selected ? 'translateY(-8px)' : 'none',
     position: 'relative',
   }),
-  hand: { display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'center', padding: '8px 0' },
+  hand: { display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '16px 8px 8px 8px', gap: '0px', alignItems: 'flex-end', minHeight: '100px' },
   trickSlot: { width: '60px', height: '88px', border: `1px dashed ${BORDER}`, borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: MUTED, fontSize: '11px' },
   badge: (color) => ({ background: `${color}22`, border: `1px solid ${color}66`, color, borderRadius: '4px', padding: '2px 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.05em' }),
   playerSlot: (active, isMe) => ({
@@ -52,28 +52,93 @@ const S = {
 // ── Card component ────────────────────────────────────────────────────────────
 function PlayingCard({ card, selected, onClick, small }) {
   const isRed = card.suit === '♥' || card.suit === '♦' || card.suit === 'JOKER';
-  const display = card.suit === 'JOKER'
-    ? (card.rank === 'BIG' ? '🃏' : '🤡')
-    : card.rank;
-  const suitDisplay = card.suit === 'JOKER' ? (card.rank === 'BIG' ? 'BIG' : 'SML') : card.suit;
+  const isJoker = card.suit === 'JOKER';
+  const rank = isJoker ? (card.rank === 'BIG' ? 'BIG' : 'SML') : card.rank;
+  const suit = isJoker ? '🃏' : card.suit;
+  const color = isRed ? '#cc2200' : '#111111';
 
-  if (small) {
-    return (
-      <div style={{
-        ...S.playingCard(selected, card.suit),
-        width: '36px', height: '52px', fontSize: '11px', padding: '2px 3px'
-      }} onClick={onClick}>
-        <span style={{ color: isRed ? '#e03030' : '#111', lineHeight: 1 }}>{display}</span>
-        <span style={{ fontSize: '10px', color: isRed ? '#e03030' : '#111' }}>{suitDisplay}</span>
-      </div>
-    );
-  }
+  const suitSymbol = { '♠': '♠', '♥': '♥', '♦': '♦', '♣': '♣' };
+  const centerSymbols = {
+    'A': [suit], '2': [suit, suit], '3': [suit, suit, suit],
+    '4': [suit, suit, suit, suit], '5': [suit, suit, suit, suit, suit],
+    '6': [suit, suit, suit, suit, suit, suit],
+    '7': [suit, suit, suit, suit, suit, suit, suit],
+    '8': [suit, suit, suit, suit, suit, suit, suit, suit],
+    '9': [suit, suit, suit, suit, suit, suit, suit, suit, suit],
+    '10': [suit, suit, suit, suit, suit, suit, suit, suit, suit, suit],
+    'J': null, 'Q': null, 'K': null,
+  };
+
+  const w = small ? 38 : 58;
+  const h = small ? 54 : 84;
+  const fontSize = small ? 10 : 13;
+  const marginLeft = selected ? (small ? -14 : -18) : (small ? -18 : -24);
+
+  const cardStyle = {
+    display: 'inline-flex', flexDirection: 'column', alignItems: 'stretch',
+    width: `${w}px`, height: `${h}px`, minWidth: `${w}px`,
+    background: selected
+      ? 'linear-gradient(135deg, #fffdf0, #fff8d6)'
+      : 'linear-gradient(135deg, #ffffff, #f8f8f8)',
+    border: `${selected ? 2 : 1.5}px solid ${selected ? GOLD : '#bbb'}`,
+    borderRadius: small ? '4px' : '6px',
+    cursor: 'pointer',
+    boxShadow: selected
+      ? `0 -10px 20px ${GOLD}66, 0 2px 8px rgba(0,0,0,0.3)`
+      : '0 2px 6px rgba(0,0,0,0.25)',
+    transform: selected ? 'translateY(-14px)' : 'none',
+    transition: 'all 0.12s ease',
+    position: 'relative',
+    marginLeft: `${marginLeft}px`,
+    flexShrink: 0,
+    overflow: 'hidden',
+    userSelect: 'none',
+    zIndex: selected ? 10 : 'auto',
+  };
+
+  // Face cards get a special design
+  const isFace = ['J', 'Q', 'K'].includes(card.rank);
+  const faceSymbol = card.rank === 'J' ? '⚔' : card.rank === 'Q' ? '♛' : '♚';
+  const faceBg = { 'J': '#e8f0ff', 'Q': '#ffe8f0', 'K': '#fff8e0' };
 
   return (
-    <div style={S.playingCard(selected, card.suit)} onClick={onClick}>
-      <div style={{ fontSize: '12px', lineHeight: 1 }}>{display}</div>
-      <div style={{ fontSize: '16px', lineHeight: 1 }}>{suitDisplay}</div>
-      <div style={{ fontSize: '12px', lineHeight: 1, transform: 'rotate(180deg)' }}>{display}</div>
+    <div style={cardStyle} onClick={onClick}>
+      {/* Top-left rank + suit */}
+      <div style={{ position: 'absolute', top: 2, left: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}>
+        <span style={{ fontSize: `${fontSize}px`, fontWeight: 900, color, fontFamily: 'Georgia, serif' }}>{rank}</span>
+        {!isJoker && <span style={{ fontSize: `${fontSize - 1}px`, color }}>{suit}</span>}
+      </div>
+
+      {/* Bottom-right (upside down) */}
+      <div style={{ position: 'absolute', bottom: 2, right: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1, transform: 'rotate(180deg)' }}>
+        <span style={{ fontSize: `${fontSize}px`, fontWeight: 900, color, fontFamily: 'Georgia, serif' }}>{rank}</span>
+        {!isJoker && <span style={{ fontSize: `${fontSize - 1}px`, color }}>{suit}</span>}
+      </div>
+
+      {/* Center design */}
+      {!small && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '14px', marginBottom: '14px', background: isFace ? faceBg[card.rank] : 'transparent', borderRadius: '3px', margin: '14px 3px' }}>
+          {isJoker ? (
+            <span style={{ fontSize: '22px' }}>{card.rank === 'BIG' ? '🃏' : '🤡'}</span>
+          ) : isFace ? (
+            <span style={{ fontSize: '24px', color }}>{faceSymbol}</span>
+          ) : card.rank === 'A' ? (
+            <span style={{ fontSize: '28px', color }}>{suit}</span>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1px', padding: '2px' }}>
+              {(centerSymbols[card.rank] || []).slice(0, 6).map((s, i) => (
+                <span key={i} style={{ fontSize: '9px', color, textAlign: 'center', lineHeight: 1.2 }}>{s}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {small && isJoker && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '14px' }}>
+          {card.rank === 'BIG' ? '🃏' : '🤡'}
+        </div>
+      )}
     </div>
   );
 }
