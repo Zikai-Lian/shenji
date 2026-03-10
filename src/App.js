@@ -5,7 +5,7 @@ import {
   detectCombo, trickWinner, countPoints, cardPoints,
   attackerLevelGain, defenderLevelGain, kittyMultiplier,
   canDeclareTrump, getTrumpSuitFromDeclaration, validateFollow,
-  decomposeCards, findMandatoryChallenger, LEVELS, SUITS, RANKS
+  findChallenger, decomposeCombo, LEVELS, SUITS, RANKS
 } from './gameLogic';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
