@@ -300,67 +300,131 @@ export default function App() {
     const combo = detectCombo(selectedCards, game.trumpSuit, game.trumpNumber);
     if (!combo.valid) return setError('Invalid combo');
 
-    // Check if leading or following
     const isLeading = game.currentTrick.length === 0;
-    if (!isLeading) {
-      // Validate follow — simplified: must follow suit if possible
-      const leadSuit = game.currentTrick[0].suit;
-      const hasSuit = myHand.filter(c => !selectedIds.includes(c.id)).some(c =>
-        leadSuit === 'TRUMP' ? isTrump(c, game.trumpSuit, game.trumpNumber) : c.suit === leadSuit && !isTrump(c, game.trumpSuit, game.trumpNumber)
-      );
-      // Basic follow check — more complex validation would go here
+
+    // If leading with a mixed/big combo, enter challenge phase
+    if (isLeading && (combo.type === 'mixed' || selectedCards.length > 1)) {
+      // counterclockwise order from leader: (mySeat+3)%4, (mySeat+2)%4, (mySeat+1)%4
+      const challengeOrder = [
+        (mySeat + 3) % 4,
+        (mySeat + 2) % 4,
+        (mySeat + 1) % 4,
+      ];
+      const newHand = myHand.filter(c => !selectedIds.includes(c.id));
+      const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
+      await updateRoom(room.id, {
+        game: {
+          ...game,
+          hands: newHands,
+          phase: 'challenge',
+          challenge: {
+            leaderSeat: mySeat,
+            leaderName: room.players[mySeat].name,
+            playedCards: selectedCards,
+            challengeOrder,          // who gets to challenge in order
+            challengeIdx: 0,         // which index in challengeOrder is up
+            challengerSeat: challengeOrder[0], // first person counterclockwise
+            originalHand: myHand,    // in case we need to return cards
+          },
+          log: [...(game.log || []), `${room.players[mySeat].name} leads ${selectedCards.length} cards — challenge phase begins.`],
+        }
+      });
+      setSelectedIds([]);
+      return;
     }
 
-    const newHand = myHand.filter(c => !selectedIds.includes(c.id));
+    await commitPlay(selectedCards, isLeading);
+  };
+
+  // Challenger says they can beat a card — they pick which sub-combo to keep
+  const handleChallenge = async (keptCombo) => {
+    if (!game.challenge) return;
+    if (game.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
+
+    const { leaderSeat, playedCards, originalHand } = game.challenge;
+    // Return unkept cards to leader's hand
+    const keptIds = new Set(keptCombo.map(c => c.id));
+    const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
+    const leaderHand = [...(game.hands[leaderSeat] || []), ...returnedCards];
+    const newHands = game.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
+
+    await updateRoom(room.id, {
+      game: {
+        ...game,
+        hands: newHands,
+        phase: 'playing',
+        challenge: null,
+        currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players[leaderSeat].name }],
+        currentTurn: (leaderSeat + 1) % 4,
+        log: [...(game.log || []), `${room.players[mySeat].name} challenges! Leader must play ${keptCombo.length} cards.`],
+      }
+    });
+    setSelectedIds([]);
+  };
+
+  // Pass on challenge — next counterclockwise player gets to challenge
+  const handlePassChallenge = async () => {
+    if (!game.challenge) return;
+    if (game.challenge.challengerSeat !== mySeat) return;
+
+    const { challengeOrder, challengeIdx, playedCards, leaderSeat } = game.challenge;
+    const nextIdx = challengeIdx + 1;
+
+    if (nextIdx >= challengeOrder.length) {
+      // Nobody challenged — commit the play as-is
+      await updateRoom(room.id, {
+        game: {
+          ...game,
+          phase: 'playing',
+          challenge: null,
+          currentTrick: [{ playerIdx: leaderSeat, cards: playedCards, playerName: room.players[leaderSeat].name }],
+          currentTurn: (leaderSeat + 1) % 4,
+          log: [...(game.log || []), `No challenge — ${room.players[leaderSeat].name}'s play stands.`],
+        }
+      });
+    } else {
+      await updateRoom(room.id, {
+        game: {
+          ...game,
+          challenge: {
+            ...game.challenge,
+            challengeIdx: nextIdx,
+            challengerSeat: challengeOrder[nextIdx],
+          }
+        }
+      });
+    }
+    setSelectedIds([]);
+  };
+
+  const commitPlay = async (cards, isLeading) => {
+    const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
     const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    const newTrick = [...game.currentTrick, { playerIdx: mySeat, cards: selectedCards, playerName: room.players[mySeat].name }];
+    const newTrick = [...(game.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players[mySeat].name }];
 
     let newGame = { ...game, hands: newHands, currentTrick: newTrick };
 
     if (newTrick.length === 4) {
-      // Resolve trick
       const winner = trickWinner(newTrick, game.trumpSuit, game.trumpNumber);
       const trickPoints = newTrick.flatMap(p => p.cards).reduce((s, c) => s + cardPoints(c), 0);
       const winnerTeam = winner % 2;
       const newScores = [...game.scores];
       newScores[winnerTeam] += trickPoints;
-
       const newTricks = [...(game.tricks || []), { plays: newTrick, winner, points: trickPoints }];
       const log = [...(game.log || []), `${room.players[winner].name} wins trick (+${trickPoints} pts)`];
 
-      // Check if round over
       const totalCards = newHands.reduce((s, h) => s + h.length, 0);
       if (totalCards === 0) {
-        // Round over — add kitty points
         const kittyPts = countPoints(game.kitty || []);
         const lastTrickWinnerTeam = winner % 2;
         const mult = kittyMultiplier(newTrick.flatMap(p => p.cards), game.trumpSuit, game.trumpNumber);
         newScores[lastTrickWinnerTeam] += kittyPts * mult;
-
         const defScore = newScores[1 - game.attackingTeam];
         const atkGain = attackerLevelGain(defScore);
         const defGain = defenderLevelGain(defScore);
-
-        newGame = {
-          ...newGame,
-          hands: newHands,
-          currentTrick: [],
-          tricks: newTricks,
-          scores: newScores,
-          phase: 'round_end',
-          roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
-          log: [...log, `Round over! Defenders scored ${defScore} pts.`],
-        };
+        newGame = { ...newGame, hands: newHands, currentTrick: [], tricks: newTricks, scores: newScores, phase: 'round_end', roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult }, log: [...log, `Round over! Defenders scored ${defScore} pts.`] };
       } else {
-        newGame = {
-          ...newGame,
-          hands: newHands,
-          currentTrick: [],
-          tricks: newTricks,
-          scores: newScores,
-          currentTurn: winner,
-          log,
-        };
+        newGame = { ...newGame, hands: newHands, currentTrick: [], tricks: newTricks, scores: newScores, currentTurn: winner, log };
       }
     } else {
       newGame.currentTurn = (mySeat + 1) % 4;
@@ -369,6 +433,7 @@ export default function App() {
     await updateRoom(room.id, { game: newGame });
     setSelectedIds([]);
   };
+
 
   const handleNextRound = async () => {
     const r = game.roundResult;
@@ -474,6 +539,7 @@ export default function App() {
           onDeclareTrump={handleDeclareTrump} onTakeKitty={handleTakeKitty}
           onDiscardKitty={handleDiscardKitty} onPlayCards={handlePlayCards}
           onNextRound={handleNextRound} playerId={playerId}
+          onChallenge={handleChallenge} onPassChallenge={handlePassChallenge}
         />
       )}
     </div>
@@ -481,7 +547,7 @@ export default function App() {
 }
 
 // ── Game Screen ───────────────────────────────────────────────────────────────
-function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId }) {
+function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onPassChallenge }) {
   const isMyTurn = game.currentTurn === mySeat;
   const isKittyHolder = game.kittyHolder === mySeat;
   const attackTeamName = `Team ${game.attackingTeam === 0 ? 'A' : 'B'}`;
@@ -603,6 +669,54 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           Waiting for {room.players[game.kittyHolder]?.name} to discard kitty...
         </div>
       )}
+
+      {/* Challenge Phase */}
+      {game.phase === 'challenge' && game.challenge && (() => {
+        const ch = game.challenge;
+        const isChallenger = ch.challengerSeat === mySeat;
+        const isLeader = ch.leaderSeat === mySeat;
+        const challName = room.players[ch.challengerSeat]?.name;
+
+        return (
+          <div style={{ background: SURFACE, border: `2px solid ${RED}66`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
+            <div style={{ color: RED, fontWeight: 700, marginBottom: '8px' }}>⚔ Challenge Phase</div>
+
+            {/* Show the played cards */}
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ fontSize: '12px', color: MUTED, marginBottom: '6px' }}>{ch.leaderName} played:</div>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {ch.playedCards.map(c => <PlayingCard key={c.id} card={c} small />)}
+              </div>
+            </div>
+
+            {isChallenger && (
+              <>
+                <div style={{ color: TEXT, fontSize: '13px', marginBottom: '12px' }}>
+                  It's your turn to challenge. Select which cards you want the leader to keep, or pass.
+                </div>
+                <button style={S.btn(RED)} onClick={() => onChallenge(selectedCards)}>
+                  Challenge — Leader keeps these {selectedCards.length} cards
+                </button>
+                <button style={{ ...S.btn('#444'), marginTop: '4px' }} onClick={onPassChallenge}>
+                  Pass — I can't beat any of it
+                </button>
+              </>
+            )}
+
+            {!isChallenger && !isLeader && (
+              <div style={{ color: MUTED, fontSize: '13px' }}>
+                Waiting for {challName} to challenge or pass...
+              </div>
+            )}
+
+            {isLeader && (
+              <div style={{ color: MUTED, fontSize: '13px' }}>
+                Waiting for opponents to challenge your play...
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {game.phase === 'playing' && (
         <div style={{ background: SURFACE, border: `1px solid ${isMyTurn ? GOLD + '66' : BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
