@@ -30,6 +30,15 @@ export function shuffle(arr) {
   return a;
 }
 
+export function dealCardsSequential(cards) {
+  // Returns the full sequence of deals: [{seat, card}] then kitty at end
+  const shuffled = shuffle(cards);
+  const kitty = shuffled.slice(0, 6);
+  const remaining = shuffled.slice(6);
+  const sequence = remaining.map((card, i) => ({ seat: i % 4, card }));
+  return { sequence, kitty };
+}
+
 export function dealCards(cards) {
   const shuffled = shuffle(cards);
   const kitty = shuffled.slice(0, 6);
