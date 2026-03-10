@@ -807,18 +807,6 @@ function getConsecutiveRuns(keys, leadSuit, trumpSuit, trumpNumber) {
 }
 
 // Find the longest tractor (consecutive pairs/triples) starting at each position
-function findTractors(groupMap, minGroupSize, sortedKeys) {
-  const tractors = [];
-  for (let i = 0; i < sortedKeys.length; i++) {
-    if ((groupMap[sortedKeys[i]] || []).length < minGroupSize) continue;
-    let len = 1;
-    while (i + len < sortedKeys.length && (groupMap[sortedKeys[i + len]] || []).length >= minGroupSize) len++;
-    if (len >= 2) {
-      tractors.push({ start: i, length: len, keys: sortedKeys.slice(i, i + len) });
-    }
-  }
-  return tractors;
-}
 
 // Decompose a set of same-suit cards into the optimal sub-components
 // "Optimal" = maximize the minimum tier across all components
