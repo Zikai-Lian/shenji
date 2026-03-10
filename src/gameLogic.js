@@ -280,27 +280,174 @@ export function defenderLevelGain(defenderScore) {
 
 // ── Trump declaration ─────────────────────────────────────────────────────────
 
-export function canDeclareTrump(cards, currentDeclaration) {
-  // cards = cards being flipped to declare
-  // currentDeclaration = { cards, playerIdx } or null
+export function canDeclareTrump(cards, currentDeclaration, trumpNumber) {
   if (!cards || cards.length === 0) return false;
 
-  // 1 joker cannot declare
-  if (cards.length === 1 && cards[0].suit === 'JOKER') return false;
-
-  // Must all be same rank (or all jokers)
-  const allSameRank = cards.every(c => c.rank === cards[0].rank);
   const allJokers = cards.every(c => c.suit === 'JOKER');
+  const allSameRank = cards.every(c => c.rank === cards[0].rank);
+
   if (!allSameRank && !allJokers) return false;
 
-  // Must have more cards than current declaration to override
+  // Jokers: need 2+ to declare, cannot use 1 joker
+  if (allJokers && cards.length < 2) return false;
+
+  // Non-joker cards: must be the trump number
+  if (!allJokers) {
+    if (cards[0].rank !== trumpNumber) return false;
+    // 1 trump number = valid declaration (no minimum)
+  }
+
+  // Must have strictly more cards than current declaration to override
   if (currentDeclaration && cards.length <= currentDeclaration.cards.length) return false;
 
   return true;
+}
+
+// Check if 3 of the same trump number suit have been played -> lock in that suit
+export function checkTripleLockIn(hands, trumpNumber) {
+  // Count trump numbers by suit across all hands that have been removed (played)
+  // This is called after dealing to check declarations
+  return null; // handled in App.js via declaration tracking
 }
 
 export function getTrumpSuitFromDeclaration(declCards) {
   if (!declCards || declCards.length === 0) return null;
   if (declCards.every(c => c.suit === 'JOKER')) return null; // no trump suit
   return declCards[0].suit;
+}
+
+// ── Follow-suit enforcement ───────────────────────────────────────────────────
+
+// Group cards by their effective key (for counting pairs/triples)
+function groupCards(cards, trumpSuit, trumpNumber) {
+  const groups = {};
+  for (const card of cards) {
+    const key = cardKey(card, trumpSuit, trumpNumber);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(card);
+  }
+  return groups;
+}
+
+function countGroupsOfSize(hand, size, suit, trumpSuit, trumpNumber) {
+  const suitCards = hand.filter(c =>
+    suit === 'TRUMP' ? isTrump(c, trumpSuit, trumpNumber) : (!isTrump(c, trumpSuit, trumpNumber) && c.suit === suit)
+  );
+  const groups = groupCards(suitCards, trumpSuit, trumpNumber);
+  return Object.values(groups).filter(g => g.length >= size).length;
+}
+
+function hasTractorInSuit(hand, groupSize, suit, trumpSuit, trumpNumber) {
+  const suitCards = hand.filter(c =>
+    suit === 'TRUMP' ? isTrump(c, trumpSuit, trumpNumber) : (!isTrump(c, trumpSuit, trumpNumber) && c.suit === suit)
+  );
+  const groups = groupCards(suitCards, trumpSuit, trumpNumber);
+  // Check consecutive pairs/triples in trump order or rank order
+  if (suit === 'TRUMP') {
+    const order = getTrumpOrder(trumpSuit, trumpNumber);
+    const keys = Object.keys(groups).filter(k => groups[k].length >= groupSize);
+    const positions = keys.map(k => order.indexOf(k)).filter(p => p !== -1).sort((a,b) => a-b);
+    for (let i = 1; i < positions.length; i++) {
+      if (positions[i] === positions[i-1] + 1) return true;
+    }
+  } else {
+    const keys = Object.keys(groups).filter(k => groups[k].length >= groupSize);
+    const ranks = keys.map(k => RANKS.indexOf(k.split('_')[1])).filter(r => r !== -1).sort((a,b)=>a-b);
+    for (let i = 1; i < ranks.length; i++) {
+      if (ranks[i] === ranks[i-1] + 1) return true;
+    }
+  }
+  return false;
+}
+
+// Returns error string if play is illegal, or null if legal
+export function validateFollow(playedCards, hand, leadCombo, trumpSuit, trumpNumber) {
+  const n = playedCards.length;
+  if (n !== leadCombo.cards.length) return `Must play exactly ${leadCombo.cards.length} cards`;
+
+  const leadSuit = getLeadSuit(leadCombo.cards, trumpSuit, trumpNumber);
+  const playedSuit = getLeadSuit(playedCards, trumpSuit, trumpNumber);
+
+  const suitCardsInHand = hand.filter(c =>
+    leadSuit === 'TRUMP'
+      ? isTrump(c, trumpSuit, trumpNumber)
+      : (!isTrump(c, trumpSuit, trumpNumber) && c.suit === leadSuit)
+  );
+
+  // If player has no cards of lead suit at all, anything goes
+  if (suitCardsInHand.length === 0) return null;
+
+  // Player must use as many lead-suit cards as possible
+  const playedInSuit = playedCards.filter(c =>
+    leadSuit === 'TRUMP'
+      ? isTrump(c, trumpSuit, trumpNumber)
+      : (!isTrump(c, trumpSuit, trumpNumber) && c.suit === leadSuit)
+  );
+  const maxSuitCards = Math.min(suitCardsInHand.length, n);
+  if (playedInSuit.length < maxSuitCards) {
+    return `Must play more ${leadSuit} cards — you have ${suitCardsInHand.length}`;
+  }
+
+  // Now check structure requirements based on lead combo type
+  const type = leadCombo.type;
+
+  if (type === 'pair') {
+    // Must play a pair if you have one
+    if (countGroupsOfSize(hand, 2, leadSuit, trumpSuit, trumpNumber) > 0) {
+      const playedGroups = groupCards(playedInSuit, trumpSuit, trumpNumber);
+      const hasPair = Object.values(playedGroups).some(g => g.length >= 2);
+      if (!hasPair) return 'You have a pair in this suit — must play it';
+    }
+  }
+
+  if (type === 'triple') {
+    // Priority: triple > pair > single
+    const hasTriple = countGroupsOfSize(hand, 3, leadSuit, trumpSuit, trumpNumber) > 0;
+    const hasPair = countGroupsOfSize(hand, 2, leadSuit, trumpSuit, trumpNumber) > 0;
+    const playedGroups = groupCards(playedInSuit, trumpSuit, trumpNumber);
+    if (hasTriple) {
+      const playedTriple = Object.values(playedGroups).some(g => g.length >= 3);
+      if (!playedTriple) return 'You have a triple in this suit — must play it first';
+    } else if (hasPair) {
+      const playedPair = Object.values(playedGroups).some(g => g.length >= 2);
+      if (!playedPair) return 'You have a pair in this suit — must play it';
+    }
+    // else singles are fine
+  }
+
+  if (type === 'pair_tractor') {
+    // Priority: tractor > 2 pairs > singles (no triples needed)
+    const hasTractor = hasTractorInSuit(hand, 2, leadSuit, trumpSuit, trumpNumber);
+    const pairCount = countGroupsOfSize(hand, 2, leadSuit, trumpSuit, trumpNumber);
+    const playedGroups = groupCards(playedInSuit, trumpSuit, trumpNumber);
+    const playedPairs = Object.values(playedGroups).filter(g => g.length >= 2).length;
+    const playedTractor = detectTractor(playedInSuit, trumpSuit, trumpNumber);
+    if (hasTractor && !playedTractor) return 'You have a tractor in this suit — must play it';
+    if (!hasTractor && pairCount >= 2 && playedPairs < 2) return 'You have 2+ pairs — must play them';
+    if (!hasTractor && pairCount === 1 && playedPairs < 1) return 'You have a pair — must play it';
+  }
+
+  if (type === 'triple_tractor') {
+    // Priority: triple tractor > (pair tractor OR triple, player's choice) > 2+ pairs > 1 pair > singles
+    const hasTripleTractor = hasTractorInSuit(hand, 3, leadSuit, trumpSuit, trumpNumber);
+    const hasPairTractor = hasTractorInSuit(hand, 2, leadSuit, trumpSuit, trumpNumber);
+    const hasTriple = countGroupsOfSize(hand, 3, leadSuit, trumpSuit, trumpNumber) > 0;
+    const pairCount = countGroupsOfSize(hand, 2, leadSuit, trumpSuit, trumpNumber);
+    const playedGroups = groupCards(playedInSuit, trumpSuit, trumpNumber);
+    const playedPairs = Object.values(playedGroups).filter(g => g.length >= 2).length;
+    const playedTripleTractor = detectTractor(playedInSuit, trumpSuit, trumpNumber)?.type === 'triple_tractor';
+    const playedPairTractor = detectTractor(playedInSuit, trumpSuit, trumpNumber)?.type === 'pair_tractor';
+    const playedTriple = Object.values(playedGroups).some(g => g.length >= 3);
+
+    if (hasTripleTractor && !playedTripleTractor) return 'You have a triple tractor — must play it';
+    if (!hasTripleTractor && (hasPairTractor || hasTriple)) {
+      if (!playedPairTractor && !playedTriple) return 'You have a pair tractor or triple — must play one';
+    }
+    if (!hasTripleTractor && !hasPairTractor && !hasTriple) {
+      if (pairCount >= 2 && playedPairs < 2) return 'You have 2+ pairs — must play them';
+      if (pairCount === 1 && playedPairs < 1) return 'You have a pair — must play it';
+    }
+  }
+
+  return null; // valid
 }
