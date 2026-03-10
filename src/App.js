@@ -4,7 +4,7 @@ import {
   buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
   detectCombo, trickWinner, countPoints, cardPoints,
   attackerLevelGain, defenderLevelGain, kittyMultiplier,
-  canDeclareTrump, getTrumpSuitFromDeclaration, LEVELS, SUITS, RANKS
+  canDeclareTrump, getTrumpSuitFromDeclaration, validateFollow, LEVELS, SUITS, RANKS
 } from './gameLogic';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ const S = {
     transition: 'all 0.1s', transform: selected ? 'translateY(-8px)' : 'none',
     position: 'relative',
   }),
-  hand: { display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '16px 8px 8px 8px', gap: '0px', alignItems: 'flex-end', minHeight: '100px' },
+  hand: { display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '20px 44px 8px 44px', gap: '0px', alignItems: 'flex-end', minHeight: '110px', WebkitOverflowScrolling: 'touch' },
   trickSlot: { width: '60px', height: '88px', border: `1px dashed ${BORDER}`, borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: MUTED, fontSize: '11px' },
   badge: (color) => ({ background: `${color}22`, border: `1px solid ${color}66`, color, borderRadius: '4px', padding: '2px 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.05em' }),
   playerSlot: (active, isMe) => ({
@@ -54,94 +54,90 @@ function PlayingCard({ card, selected, onClick, small }) {
   const isRed = card.suit === '♥' || card.suit === '♦' || card.suit === 'JOKER';
   const isJoker = card.suit === 'JOKER';
   const rank = isJoker ? (card.rank === 'BIG' ? 'BIG' : 'SML') : card.rank;
-  const suit = isJoker ? '🃏' : card.suit;
-  const color = isRed ? '#cc2200' : '#111111';
-
-  const suitSymbol = { '♠': '♠', '♥': '♥', '♦': '♦', '♣': '♣' };
-  const centerSymbols = {
-    'A': [suit], '2': [suit, suit], '3': [suit, suit, suit],
-    '4': [suit, suit, suit, suit], '5': [suit, suit, suit, suit, suit],
-    '6': [suit, suit, suit, suit, suit, suit],
-    '7': [suit, suit, suit, suit, suit, suit, suit],
-    '8': [suit, suit, suit, suit, suit, suit, suit, suit],
-    '9': [suit, suit, suit, suit, suit, suit, suit, suit, suit],
-    '10': [suit, suit, suit, suit, suit, suit, suit, suit, suit, suit],
-    'J': null, 'Q': null, 'K': null,
+  const suit = card.suit;
+  const color = isRed ? '#cc2200' : '#1a1a1a';
+  const w = small ? 40 : 64;
+  const h = small ? 56 : 92;
+  const fs = small ? 9 : 13;
+  const marginLeft = selected ? (small ? -10 : -14) : (small ? -14 : -22);
+  const PIP_LAYOUTS = {
+    'A':  [[0.5,0.5,false]],
+    '2':  [[0.2,0.5,false],[0.8,0.5,true]],
+    '3':  [[0.2,0.5,false],[0.5,0.5,false],[0.8,0.5,true]],
+    '4':  [[0.22,0.28,false],[0.22,0.72,false],[0.78,0.28,true],[0.78,0.72,true]],
+    '5':  [[0.22,0.28,false],[0.22,0.72,false],[0.5,0.5,false],[0.78,0.28,true],[0.78,0.72,true]],
+    '6':  [[0.22,0.28,false],[0.22,0.72,false],[0.5,0.28,false],[0.5,0.72,false],[0.78,0.28,true],[0.78,0.72,true]],
+    '7':  [[0.2,0.28,false],[0.2,0.72,false],[0.37,0.5,false],[0.52,0.28,false],[0.52,0.72,false],[0.78,0.28,true],[0.78,0.72,true]],
+    '8':  [[0.18,0.28,false],[0.18,0.72,false],[0.36,0.5,false],[0.5,0.28,false],[0.5,0.72,false],[0.64,0.5,true],[0.82,0.28,true],[0.82,0.72,true]],
+    '9':  [[0.15,0.28,false],[0.15,0.72,false],[0.37,0.28,false],[0.37,0.72,false],[0.5,0.5,false],[0.63,0.28,true],[0.63,0.72,true],[0.85,0.28,true],[0.85,0.72,true]],
+    '10': [[0.12,0.28,false],[0.12,0.72,false],[0.32,0.28,false],[0.32,0.72,false],[0.48,0.28,false],[0.48,0.72,false],[0.68,0.28,true],[0.68,0.72,true],[0.88,0.28,true],[0.88,0.72,true]],
   };
-
-  const w = small ? 38 : 58;
-  const h = small ? 54 : 84;
-  const fontSize = small ? 10 : 13;
-  const marginLeft = selected ? (small ? -14 : -18) : (small ? -18 : -24);
-
+  const FACE = {
+    'J': { bg:'#ddeeff', inner:'#aaccff33', symbol:'⚔️', label:'JACK',  col:'#1a3a7a' },
+    'Q': { bg:'#ffdded', inner:'#ffaabb33', symbol:'♛', label:'QUEEN', col:'#8a1040' },
+    'K': { bg:'#fff5d0', inner:'#ffe89933', symbol:'♚', label:'KING',  col:'#7a4a00' },
+  };
+  const isFace = ['J','Q','K'].includes(card.rank);
+  const pips = PIP_LAYOUTS[card.rank];
+  const pipSize = card.rank === 'A' ? (small ? 14 : 26) : (small ? 8 : 12);
   const cardStyle = {
-    display: 'inline-flex', flexDirection: 'column', alignItems: 'stretch',
-    width: `${w}px`, height: `${h}px`, minWidth: `${w}px`,
-    background: selected
-      ? 'linear-gradient(135deg, #fffdf0, #fff8d6)'
-      : 'linear-gradient(135deg, #ffffff, #f8f8f8)',
+    display: 'inline-block', width: `${w}px`, height: `${h}px`, minWidth: `${w}px`,
+    background: (isFace && !small) ? `linear-gradient(160deg,${FACE[card.rank].bg},#fff)` :
+                selected ? 'linear-gradient(160deg,#fffdf0,#fff6cc)' : 'linear-gradient(160deg,#ffffff,#f5f5f5)',
     border: `${selected ? 2 : 1.5}px solid ${selected ? GOLD : '#bbb'}`,
-    borderRadius: small ? '4px' : '6px',
-    cursor: 'pointer',
-    boxShadow: selected
-      ? `0 -10px 20px ${GOLD}66, 0 2px 8px rgba(0,0,0,0.3)`
-      : '0 2px 6px rgba(0,0,0,0.25)',
-    transform: selected ? 'translateY(-14px)' : 'none',
-    transition: 'all 0.12s ease',
-    position: 'relative',
-    marginLeft: `${marginLeft}px`,
-    flexShrink: 0,
-    overflow: 'hidden',
-    userSelect: 'none',
-    zIndex: selected ? 10 : 'auto',
+    borderRadius: small ? '4px' : '7px', cursor: 'pointer',
+    boxShadow: selected ? `0 -12px 24px ${GOLD}66,0 4px 10px rgba(0,0,0,0.35)` : '0 2px 6px rgba(0,0,0,0.28)',
+    transform: selected ? 'translateY(-18px)' : 'none', transition: 'all 0.12s ease',
+    position: 'relative', marginLeft: `${marginLeft}px`,
+    flexShrink: 0, overflow: 'hidden', userSelect: 'none', zIndex: selected ? 10 : 'auto',
   };
-
-  // Face cards get a special design
-  const isFace = ['J', 'Q', 'K'].includes(card.rank);
-  const faceSymbol = card.rank === 'J' ? '⚔' : card.rank === 'Q' ? '♛' : '♚';
-  const faceBg = { 'J': '#e8f0ff', 'Q': '#ffe8f0', 'K': '#fff8e0' };
-
+  const Corner = ({ flip }) => (
+    <div style={{
+      position:'absolute', [flip?'bottom':'top']:'2px', [flip?'right':'left']:'3px',
+      display:'flex', flexDirection:'column', alignItems:'center',
+      transform: flip ? 'rotate(180deg)' : 'none', lineHeight: 1.1,
+    }}>
+      <span style={{ fontSize:`${fs}px`, fontWeight:900, color, fontFamily:'Georgia,serif' }}>{rank}</span>
+      {!small && !isJoker && <span style={{ fontSize:'9px', color, lineHeight:1 }}>{suit}</span>}
+    </div>
+  );
   return (
     <div style={cardStyle} onClick={onClick}>
-      {/* Top-left rank + suit */}
-      <div style={{ position: 'absolute', top: 2, left: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}>
-        <span style={{ fontSize: `${fontSize}px`, fontWeight: 900, color, fontFamily: 'Georgia, serif' }}>{rank}</span>
-        {!isJoker && <span style={{ fontSize: `${fontSize - 1}px`, color }}>{suit}</span>}
-      </div>
-
-      {/* Bottom-right (upside down) */}
-      <div style={{ position: 'absolute', bottom: 2, right: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1, transform: 'rotate(180deg)' }}>
-        <span style={{ fontSize: `${fontSize}px`, fontWeight: 900, color, fontFamily: 'Georgia, serif' }}>{rank}</span>
-        {!isJoker && <span style={{ fontSize: `${fontSize - 1}px`, color }}>{suit}</span>}
-      </div>
-
-      {/* Center design */}
-      {!small && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '14px', marginBottom: '14px', background: isFace ? faceBg[card.rank] : 'transparent', borderRadius: '3px', margin: '14px 3px' }}>
-          {isJoker ? (
-            <span style={{ fontSize: '22px' }}>{card.rank === 'BIG' ? '🃏' : '🤡'}</span>
-          ) : isFace ? (
-            <span style={{ fontSize: '24px', color }}>{faceSymbol}</span>
-          ) : card.rank === 'A' ? (
-            <span style={{ fontSize: '28px', color }}>{suit}</span>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1px', padding: '2px' }}>
-              {(centerSymbols[card.rank] || []).slice(0, 6).map((s, i) => (
-                <span key={i} style={{ fontSize: '9px', color, textAlign: 'center', lineHeight: 1.2 }}>{s}</span>
-              ))}
-            </div>
-          )}
+      <Corner flip={false} />
+      <Corner flip={true} />
+      {isJoker && (
+        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', textAlign:'center' }}>
+          <div style={{ fontSize: small?'18px':'28px' }}>{card.rank === 'BIG' ? '🃏' : '🤡'}</div>
+          {!small && <div style={{ fontSize:'7px', color:'#888', marginTop:'2px', letterSpacing:'0.1em' }}>{card.rank} JOKER</div>}
         </div>
       )}
-
-      {small && isJoker && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '14px' }}>
-          {card.rank === 'BIG' ? '🃏' : '🤡'}
+      {!isJoker && !small && (
+        <div style={{ position:'absolute', top:`${Math.round(h*0.19)}px`, left:'4px', right:'4px', bottom:`${Math.round(h*0.19)}px` }}>
+          {isFace ? (
+            <div style={{
+              width:'100%', height:'100%', border:`2px solid ${FACE[card.rank].col}44`,
+              borderRadius:'4px', background: FACE[card.rank].inner,
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'2px'
+            }}>
+              <span style={{ fontSize:'22px', color:FACE[card.rank].col, lineHeight:1 }}>{FACE[card.rank].symbol}</span>
+              <span style={{ fontSize:'7px', fontWeight:700, color:FACE[card.rank].col, letterSpacing:'0.06em' }}>{suit} {FACE[card.rank].label} {suit}</span>
+              <span style={{ fontSize:'22px', color:FACE[card.rank].col, transform:'rotate(180deg)', lineHeight:1, marginTop:'2px' }}>{FACE[card.rank].symbol}</span>
+            </div>
+          ) : pips ? (
+            pips.map(([top,left,flip],i) => (
+              <span key={i} style={{
+                position:'absolute', top:`${top*100}%`, left:`${left*100}%`,
+                transform:`translate(-50%,-50%)${flip?' rotate(180deg)':''}`,
+                fontSize:`${pipSize}px`, color, lineHeight:1, display:'block',
+              }}>{suit}</span>
+            ))
+          ) : null}
         </div>
       )}
     </div>
   );
 }
+
 
 // ── Lobby Screen ──────────────────────────────────────────────────────────────
 function LobbyScreen({ room, playerId, onStart }) {
@@ -312,7 +308,7 @@ export default function App() {
       const { seat, card } = seq[idx];
       const newHands = game.hands.map((h, i) => i === seat ? [...h, card] : h);
       await updateRoom(room.id, { game: { ...game, hands: newHands, dealIndex: idx + 1 } });
-    }, 1000);
+    }, 500);
 
     return () => clearTimeout(dealTimerRef.current);
   }, [game?.dealIndex, game?.phase, game?.dealComplete]);
@@ -327,14 +323,22 @@ export default function App() {
 
   const handleDeclareTrump = async () => {
     if (!game || selectedCards.length === 0) return;
-    if (!canDeclareTrump(selectedCards, game.trumpDeclaration)) {
-      return setError('Invalid trump declaration');
+    if (!canDeclareTrump(selectedCards, game.trumpDeclaration, game.trumpNumber)) {
+      return setError(`Select trump number cards (${game.trumpNumber}) or 2+ jokers to declare`);
     }
+    // Locked if 3+ of same trump number suit declared
+    const allJokers = selectedCards.every(c => c.suit === 'JOKER');
+    const isLocked = !allJokers && selectedCards.length >= 3;
     const trumpSuit = getTrumpSuitFromDeclaration(selectedCards);
+    const declName = room.players[mySeat]?.name;
+    const logMsg = isLocked
+      ? `${declName} locks in ${trumpSuit} as trump with 3 ${game.trumpNumber}s!`
+      : `${declName} declares trump${trumpSuit ? ` (${trumpSuit})` : ' (jokers — no suit)'}.`;
     const newGame = {
       ...game,
-      trumpDeclaration: { cards: selectedCards, playerIdx: mySeat },
+      trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, locked: isLocked },
       trumpSuit,
+      log: [...(game.log || []), logMsg],
     };
     await updateRoom(room.id, { game: newGame });
     setSelectedIds([]);
@@ -366,6 +370,13 @@ export default function App() {
     if (!combo.valid) return setError('Invalid combo');
 
     const isLeading = game.currentTrick.length === 0;
+
+    if (!isLeading) {
+      const leadPlay = game.currentTrick[0];
+      const leadCombo = detectCombo(leadPlay.cards, game.trumpSuit, game.trumpNumber);
+      const followErr = validateFollow(selectedCards, myHand, { ...leadCombo, cards: leadPlay.cards }, game.trumpSuit, game.trumpNumber);
+      if (followErr) return setError(followErr);
+    }
 
     // If leading with a mixed/big combo, enter challenge phase
     if (isLeading && (combo.type === 'mixed' || selectedCards.length > 1)) {
@@ -552,15 +563,19 @@ export default function App() {
   };
 
   // ── Sort hand ────────────────────────────────────────────────────────────
+  const SUIT_ORDER = ['♠', '♥', '♣', '♦'];
   const sortedHand = [...myHand].sort((a, b) => {
     if (!game) return 0;
     const aTrump = isTrump(a, game.trumpSuit, game.trumpNumber);
     const bTrump = isTrump(b, game.trumpSuit, game.trumpNumber);
-    if (aTrump && !bTrump) return 1;
+    if (!aTrump && !bTrump) {
+      const sd = SUIT_ORDER.indexOf(a.suit) - SUIT_ORDER.indexOf(b.suit);
+      if (sd !== 0) return sd;
+      return suitRank(a) - suitRank(b);
+    }
     if (!aTrump && bTrump) return -1;
-    if (aTrump && bTrump) return trumpRank(a, game.trumpSuit, game.trumpNumber) - trumpRank(b, game.trumpSuit, game.trumpNumber);
-    if (a.suit !== b.suit) return a.suit.localeCompare(b.suit);
-    return suitRank(a) - suitRank(b);
+    if (aTrump && !bTrump) return 1;
+    return trumpRank(a, game.trumpSuit, game.trumpNumber) - trumpRank(b, game.trumpSuit, game.trumpNumber);
   });
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -741,28 +756,45 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         const isChallenger = ch.challengerSeat === mySeat;
         const isLeader = ch.leaderSeat === mySeat;
         const challName = room.players[ch.challengerSeat]?.name;
+        // Challenger selects from the LEADER's played cards to decide what sub-combo to keep
+        const selectedLeaderCardIds = selectedIds.filter(id => ch.playedCards.some(c => c.id === id));
+        const selectedLeaderCards = ch.playedCards.filter(c => selectedLeaderCardIds.includes(c.id));
 
         return (
           <div style={{ background: SURFACE, border: `2px solid ${RED}66`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-            <div style={{ color: RED, fontWeight: 700, marginBottom: '8px' }}>⚔ Challenge Phase</div>
+            <div style={{ color: RED, fontWeight: 700, marginBottom: '8px' }}>⚔ Challenge Phase — {challName}'s turn</div>
 
-            {/* Show the played cards */}
+            {/* Leader's played cards — clickable for challenger to pick sub-combo */}
             <div style={{ marginBottom: '12px' }}>
-              <div style={{ fontSize: '12px', color: MUTED, marginBottom: '6px' }}>{ch.leaderName} played:</div>
-              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                {ch.playedCards.map(c => <PlayingCard key={c.id} card={c} small />)}
+              <div style={{ fontSize: '12px', color: MUTED, marginBottom: '6px' }}>
+                {ch.leaderName} played ({ch.playedCards.length} cards):
               </div>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {ch.playedCards.map(c => (
+                  <PlayingCard
+                    key={c.id} card={c} small
+                    selected={isChallenger && selectedIds.includes(c.id)}
+                    onClick={isChallenger ? () => toggleCard(c.id) : undefined}
+                  />
+                ))}
+              </div>
+              {isChallenger && (
+                <div style={{ fontSize: '11px', color: MUTED, marginTop: '6px' }}>
+                  Tap the cards above you want the leader to keep (the sub-combo you can beat the rest of)
+                </div>
+              )}
             </div>
 
             {isChallenger && (
               <>
-                <div style={{ color: TEXT, fontSize: '13px', marginBottom: '12px' }}>
-                  It's your turn to challenge. Select which cards you want the leader to keep, or pass.
-                </div>
-                <button style={S.btn(RED)} onClick={() => onChallenge(selectedCards)}>
-                  Challenge — Leader keeps these {selectedCards.length} cards
+                <button
+                  style={S.btn(selectedLeaderCards.length > 0 ? RED : '#444')}
+                  onClick={() => onChallenge(selectedLeaderCards)}
+                  disabled={selectedLeaderCards.length === 0}
+                >
+                  Challenge — Force leader to play only these {selectedLeaderCards.length} cards
                 </button>
-                <button style={{ ...S.btn('#444'), marginTop: '4px' }} onClick={onPassChallenge}>
+                <button style={{ ...S.btn('#555'), marginTop: '4px' }} onClick={onPassChallenge}>
                   Pass — I can't beat any of it
                 </button>
               </>
@@ -773,7 +805,6 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
                 Waiting for {challName} to challenge or pass...
               </div>
             )}
-
             {isLeader && (
               <div style={{ color: MUTED, fontSize: '13px' }}>
                 Waiting for opponents to challenge your play...
