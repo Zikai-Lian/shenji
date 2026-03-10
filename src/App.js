@@ -315,7 +315,7 @@ export default function App() {
       const { seat, card } = seq[idx];
       const newHands = game.hands.map((h, i) => i === seat ? [...h, card] : h);
       await updateRoom(room.id, { game: { ...game, hands: newHands, dealIndex: idx + 1 } });
-    }, 500);
+    }, 250);
 
     return () => clearTimeout(dealTimerRef.current);
   }, [game?.dealIndex, game?.phase, game?.dealComplete]);
