@@ -779,7 +779,6 @@ export function findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpN
 // ── Combo decomposition & auto-challenge ─────────────────────────────────────
 
 // Tier values for comparison (higher = better)
-const TIER = { single: 1, pair: 2, triple: 3, pair_tractor: 4, triple_tractor: 5 };
 
 // Given a hand's cards in one suit, find all possible groups keyed by cardKey
 function getGroupMap(cards, trumpSuit, trumpNumber) {
@@ -826,7 +825,6 @@ function findTractors(groupMap, minGroupSize, sortedKeys) {
 
 // ── Auto-challenge detection ─────────────────────────────────────────────────
 
-const TIER = { single: 1, pair: 2, triple: 3, pair_tractor: 4, triple_tractor: 5 };
 
 function getSortedKeys(map, leadSuit, trumpSuit, trumpNumber) {
   const keys = Object.keys(map);
