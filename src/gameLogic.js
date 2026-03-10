@@ -283,28 +283,19 @@ export function defenderLevelGain(defenderScore) {
 
 export function canDeclareTrump(cards, currentDeclaration, trumpNumber) {
   if (!cards || cards.length === 0) return false;
-
   const allJokers = cards.every(c => c.suit === 'JOKER');
   const allSameRank = cards.every(c => c.rank === cards[0].rank);
-
   if (!allSameRank && !allJokers) return false;
-
-  // Jokers: need 2+ to declare, cannot use 1 joker
   if (allJokers && cards.length < 2) return false;
-
-  // Non-joker cards: must be the trump number
-  if (!allJokers) {
-    if (cards[0].rank !== trumpNumber) return false;
-    // 1 trump number = valid declaration (no minimum)
+  if (!allJokers && cards[0].rank !== trumpNumber) return false;
+  if (currentDeclaration) {
+    if (currentDeclaration.locked) return false;
+    const currentCount = currentDeclaration.declarationCount || currentDeclaration.cards.length;
+    if (cards.length <= currentCount) return false;
   }
-
-  // Must have strictly more cards than current declaration to override
-  if (currentDeclaration && cards.length <= currentDeclaration.cards.length) return false;
-
   return true;
 }
 
-// Check if 3 of the same trump number suit have been played -> lock in that suit
 export function checkTripleLockIn(hands, trumpNumber) {
   // Count trump numbers by suit across all hands that have been removed (played)
   // This is called after dealing to check declarations
