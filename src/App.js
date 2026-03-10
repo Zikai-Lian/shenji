@@ -250,11 +250,12 @@ export default function App() {
       dealIndex: 0,             // how many cards have been dealt so far
       dealComplete: false,
       kitty,
-      kittyHolder: 0,
+      kittyHolder: null,          // set after dealing: trump declarer (round 1) or first-card seat
       trumpDeclaration: null,
       trumpSuit: null,
       trumpNumber: LEVELS[0],
       firstCardSuit: sequence[0]?.card?.suit || '♠', // fallback trump
+      firstCardSeat: sequence[0]?.seat ?? 0,          // who gets dealt first
       currentTrick: [],
       tricks: [],
       scores: [0, 0],
@@ -290,11 +291,16 @@ export default function App() {
         // Fallback to first card dealt
         if (!resolvedSuit) resolvedSuit = game.firstCardSuit;
         if (mySeat === 0) { // host resolves this
-          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, dealComplete: true, log: [...(game.log||[]), `No trump declared — trump suit set to ${resolvedSuit} automatically.`] } });
+          const kittyHolder = game.firstCardSeat ?? 0;
+          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true, log: [...(game.log||[]), `No trump declared — trump suit set to ${resolvedSuit}. ${room.players[kittyHolder]?.name} holds the kitty.`] } });
         }
       } else {
         if (mySeat === 0) {
-          updateRoom(room.id, { game: { ...game, dealComplete: true } });
+          // Trump was declared — kittyHolder is the declarer (round 1 rule)
+          const kittyHolder = game.roundNum === 1
+            ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
+            : (game.firstCardSeat ?? 0);
+          updateRoom(room.id, { game: { ...game, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
         }
       }
       return;
@@ -324,24 +330,49 @@ export default function App() {
 
   const handleDeclareTrump = async () => {
     if (!game || selectedCards.length === 0) return;
-    if (!canDeclareTrump(selectedCards, game.trumpDeclaration, game.trumpNumber)) {
+
+    const allJokers = selectedCards.every(c => c.suit === 'JOKER');
+    const existingDecl = game.trumpDeclaration;
+    const newSuit = getTrumpSuitFromDeclaration(selectedCards);
+    const declName = room.players[mySeat]?.name;
+
+    // REINFORCEMENT: same player adds more same-suit trump numbers
+    const isReinforcement = existingDecl &&
+      existingDecl.playerIdx === mySeat &&
+      !allJokers &&
+      !existingDecl.locked &&
+      newSuit === game.trumpSuit &&
+      selectedCards.every(c => c.rank === game.trumpNumber && c.suit === newSuit);
+
+    if (isReinforcement) {
+      const newCount = (existingDecl.declarationCount || existingDecl.cards.length) + selectedCards.length;
+      const isLocked = newCount >= 3;
+      const logMsg = isLocked
+        ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${game.trumpNumber}s — locked!)`
+        : `${declName} reinforces ${newSuit} trump (${newCount} cards now — needs ${newCount + 1} to override).`;
+      await updateRoom(room.id, { game: {
+        ...game,
+        trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
+        log: [...(game.log || []), logMsg],
+      }});
+      setSelectedIds([]);
+      return;
+    }
+
+    // Fresh declaration or override
+    if (!canDeclareTrump(selectedCards, existingDecl, game.trumpNumber)) {
       return setError(`Select trump number cards (${game.trumpNumber}) or 2+ jokers to declare`);
     }
-    // Locked if 3+ of same trump number suit declared
-    const allJokers = selectedCards.every(c => c.suit === 'JOKER');
     const isLocked = !allJokers && selectedCards.length >= 3;
-    const trumpSuit = getTrumpSuitFromDeclaration(selectedCards);
-    const declName = room.players[mySeat]?.name;
     const logMsg = isLocked
-      ? `${declName} locks in ${trumpSuit} as trump with 3 ${game.trumpNumber}s!`
-      : `${declName} declares trump${trumpSuit ? ` (${trumpSuit})` : ' (jokers — no suit)'}.`;
-    const newGame = {
+      ? `${declName} locks in ${newSuit} as trump with 3 ${game.trumpNumber}s!`
+      : `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'}.`;
+    await updateRoom(room.id, { game: {
       ...game,
-      trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, locked: isLocked },
-      trumpSuit,
+      trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
+      trumpSuit: newSuit,
       log: [...(game.log || []), logMsg],
-    };
-    await updateRoom(room.id, { game: newGame });
+    }});
     setSelectedIds([]);
   };
 
@@ -499,7 +530,8 @@ export default function App() {
 
     const decks = buildDecks();
     const { sequence, kitty } = dealCardsSequential(decks);
-    const newKittyHolder = (game.kittyHolder + (r.defScore >= 120 ? 1 : 2)) % 4;
+    // For round 2+, kittyHolder is whoever gets dealt the first card (resolved after dealing)
+    const firstCardSeat = sequence[0]?.seat ?? 0;
 
     await updateRoom(room.id, {
       game: {
@@ -510,8 +542,9 @@ export default function App() {
         dealIndex: 0,
         dealComplete: false,
         firstCardSuit: sequence[0]?.card?.suit || '♠',
+        firstCardSeat,
         kitty,
-        kittyHolder: newKittyHolder,
+        kittyHolder: null,           // resolved after dealing completes
         trumpDeclaration: null,
         trumpSuit: null,
         trumpNumber: LEVELS[newLevels[newAttacking]],
@@ -520,7 +553,7 @@ export default function App() {
         scores: [0, 0],
         levels: newLevels,
         attackingTeam: newAttacking,
-        currentTurn: newKittyHolder,
+        currentTurn: firstCardSeat,
         selectedCards: [[], [], [], []],
         log: [`Round ${game.roundNum + 1} starts. ${room.players[newKittyHolder].name} holds kitty.`],
         roundNum: (game.roundNum || 1) + 1,
