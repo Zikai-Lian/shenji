@@ -213,7 +213,7 @@ export default function App() {
     if (subRef.current) subRef.current.unsubscribe();
     subRef.current = subscribeToRoom(room.id, (updated) => {
       setRoom(updated);
-      if (updated.state === 'game') setScreen('game');
+      if (updated.state === 'game' && updated.game) setScreen('game');
     });
     return () => { if (subRef.current) subRef.current.unsubscribe(); };
   }, [room?.id]);
@@ -547,6 +547,7 @@ export default function App() {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
+    <ErrorBoundary>
     <div style={S.app}>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" />
 
@@ -590,6 +591,7 @@ export default function App() {
         />
       )}
     </div>
+    </ErrorBoundary>
   );
 }
 
@@ -860,4 +862,22 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       )}
     </div>
   );
+}class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: '20px', color: '#ff6b6b', background: '#1a1a2e', minHeight: '100vh' }}>
+          <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '12px' }}>Something went wrong</div>
+          <pre style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: '#aaa' }}>{this.state.error?.message}</pre>
+          <button onClick={() => this.setState({ error: null })} style={{ marginTop: '16px', padding: '8px 16px', background: '#3a3a5c', border: 'none', color: 'white', borderRadius: '6px', cursor: 'pointer' }}>
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
+
