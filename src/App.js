@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, createRoom, joinRoom, updateRoom, subscribeToRoom } from './supabase';
 import {
   buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
@@ -597,9 +597,9 @@ export default function App() {
 
 // ── Game Screen ───────────────────────────────────────────────────────────────
 function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge }) {
-  const [selectedCompIdx, setSelectedCompIdx] = React.useState(null);
+  const [selectedCompIdx, setSelectedCompIdx] = useState(null);
   const isMyTurn = game.currentTurn === mySeat;
-  React.useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
+  useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
 
   const isKittyHolder = game.kittyHolder === mySeat;
   const attackTeamName = `Team ${game.attackingTeam === 0 ? 'A' : 'B'}`;
