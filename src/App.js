@@ -51,101 +51,27 @@ const S = {
 };
 
 // ── Card component ────────────────────────────────────────────────────────────
-function FacePortrait({ rank, suit, color, w, h }) {
-  const isRed = color === '#cc2200';
-  const cx = w / 2;
-  const innerW = w - 10;
-  const innerH = h - 4;
-
-  // Crown SVG path (scaled to innerW)
-  const crownY = 6;
-  const crownH = 12;
-  const crownPath = `M4,${crownY+crownH} L4,${crownY+4} L${innerW/4},${crownY+crownH/2} L${innerW/2},${crownY} L${innerW*3/4},${crownY+crownH/2} L${innerW-4},${crownY+4} L${innerW-4},${crownY+crownH} Z`;
-
-  // Jack: young face, simple hat
-  // Queen: oval face, crown + hair curls
-  // King: beard, large crown
-
-  const faceY = rank === 'K' ? 22 : rank === 'Q' ? 20 : 21;
-  const faceRx = rank === 'Q' ? 10 : 9;
-  const faceRy = rank === 'Q' ? 12 : 10;
-
-  // Hair color: court cards traditionally use dark hair (kings/jacks) or styled (queens)
-  const hairCol = isRed ? '#7a1a00' : '#1a0a00';
-  const skinCol = '#f5d5a0';
-  const clothCol = isRed ? '#cc2200' : '#0a1a4a';
-  const crownCol = '#c9a140';
-
+function FacePortrait({ rank, suit, w, h }) {
+  // deck-of-cards.js.org face SVG URL pattern
+  // suits: ♠=1, ♥=2, ♦=3, ♣=4  ranks: J=11, Q=12, K=13
+  const SUIT_NUM = { '\u2660': 1, '\u2665': 2, '\u2666': 3, '\u2663': 4 };
+  const RANK_NUM = { 'J': 11, 'Q': 12, 'K': 13 };
+  const s = SUIT_NUM[suit];
+  const r = RANK_NUM[rank];
+  if (!s || !r) return null;
+  const url = `https://deck-of-cards.js.org/faces/${s}_${r}.svg`;
   return (
-    <svg width={innerW} height={innerH} viewBox={`0 0 ${innerW} ${innerH}`} style={{display:'block'}}>
-      {/* Background */}
-      <rect width={innerW} height={innerH} fill={isRed ? '#fff5f5' : '#f5f5ff'} rx="3"/>
-      {/* Decorative border */}
-      <rect x="1.5" y="1.5" width={innerW-3} height={innerH-3} fill="none" stroke={color} strokeWidth="1" rx="2" opacity="0.4"/>
-
-      {/* === CROWN (Q and K) or HAT (J) === */}
-      {rank === 'K' && <>
-        <polygon points={`5,20 ${cx-6},12 ${cx},6 ${cx+6},12 ${innerW-5},20`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <rect x="4" y="19" width={innerW-8} height="4" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <circle cx={cx} cy="8" r="3" fill="#cc3333"/>
-        <circle cx={cx-7} cy="13" r="2" fill="#3333cc"/>
-        <circle cx={cx+7} cy="13" r="2" fill="#33cc33"/>
-      </>}
-      {rank === 'Q' && <>
-        <polygon points={`8,19 ${cx-5},13 ${cx},8 ${cx+5},13 ${innerW-8},19`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <rect x="7" y="18" width={innerW-14} height="3" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <circle cx={cx} cy="10" r="2.5" fill={isRed ? '#cc3333' : '#3333cc'}/>
-      </>}
-      {rank === 'J' && <>
-        {/* Jester-style hat */}
-        <path d={`M${cx-10},20 Q${cx-6},8 ${cx},6 Q${cx+6},8 ${cx+10},20 Z`} fill={clothCol} opacity="0.9"/>
-        <circle cx={cx} cy="5" r="3" fill={isRed ? '#e05252' : '#4466cc'}/>
-      </>}
-
-      {/* === HAIR === */}
-      {rank === 'K' && <ellipse cx={cx} cy={faceY+2} rx={faceRx+3} ry={faceRy+6} fill={hairCol}/>}
-      {rank === 'Q' && <>
-        <ellipse cx={cx} cy={faceY+2} rx={faceRx+4} ry={faceRy+8} fill={hairCol}/>
-        {/* Hair curls */}
-        <path d={`M${cx-faceRx-2},${faceY+6} Q${cx-faceRx-8},${faceY+12} ${cx-faceRx-4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
-        <path d={`M${cx+faceRx+2},${faceY+6} Q${cx+faceRx+8},${faceY+12} ${cx+faceRx+4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
-      </>}
-      {rank === 'J' && <ellipse cx={cx} cy={faceY+1} rx={faceRx+2} ry={faceRy+2} fill={hairCol}/>}
-
-      {/* === FACE === */}
-      <ellipse cx={cx} cy={faceY+4} rx={faceRx} ry={faceRy} fill={skinCol}/>
-
-      {/* === EYES === */}
-      <ellipse cx={cx-4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
-      <ellipse cx={cx+4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
-      <circle cx={cx-3.5} cy={faceY+0.8} r="0.6" fill="white"/>
-      <circle cx={cx+4.5} cy={faceY+0.8} r="0.6" fill="white"/>
-
-      {/* === EYEBROWS === */}
-      <path d={`M${cx-6},${faceY-2} Q${cx-4},${faceY-3.5} ${cx-2},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
-      <path d={`M${cx+2},${faceY-2} Q${cx+4},${faceY-3.5} ${cx+6},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
-
-      {/* === NOSE === */}
-      <path d={`M${cx},${faceY+3} Q${cx+2},${faceY+6} ${cx},${faceY+7}`} fill="none" stroke="#c8a070" strokeWidth="0.8"/>
-
-      {/* === MOUTH === */}
-      {rank === 'K' && <>
-        {/* King has mustache + beard */}
-        <path d={`M${cx-5},${faceY+8} Q${cx},${faceY+10} ${cx+5},${faceY+8}`} fill="none" stroke={hairCol} strokeWidth="1.5" strokeLinecap="round"/>
-        <ellipse cx={cx} cy={faceY+11} rx="5" ry="3" fill={hairCol} opacity="0.7"/>
-      </>}
-      {rank === 'Q' && <path d={`M${cx-4},${faceY+8} Q${cx},${faceY+11} ${cx+4},${faceY+8}`} fill="none" stroke={isRed?'#cc2200':'#883333'} strokeWidth="1.5" strokeLinecap="round"/>}
-      {rank === 'J' && <path d={`M${cx-3},${faceY+8} Q${cx},${faceY+10} ${cx+3},${faceY+8}`} fill="none" stroke="#883333" strokeWidth="1" strokeLinecap="round"/>}
-
-      {/* === COLLAR / CLOTHING === */}
-      <path d={`M${cx-innerW/2+2},${innerH} L${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+8} L${cx+8},${faceY+faceRy+4} L${cx+innerW/2-2},${innerH}`} fill={clothCol}/>
-      {/* Collar trim */}
-      <path d={`M${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+6} L${cx+8},${faceY+faceRy+4}`} fill="none" stroke={isRed?'#ff9999':'#9999ff'} strokeWidth="1"/>
-      {/* Suit symbol on chest */}
-      <text x={cx} y={innerH-8} textAnchor="middle" fontSize="10" fill={isRed?'#ffaaaa':'#aaaaff'} opacity="0.8">{suit}</text>
-    </svg>
+    <img
+      src={url}
+      width={w}
+      height={h}
+      alt={`${rank} of ${suit}`}
+      style={{ display: 'block', objectFit: 'cover', borderRadius: '2px' }}
+      onError={e => { e.target.style.display = 'none'; }}
+    />
   );
 }
+
 
 function PlayingCard({ card, selected, onClick, small }) {
   const isRed = card.suit === '\u2665' || card.suit === '\u2666' || card.suit === 'JOKER';
@@ -209,8 +135,8 @@ function PlayingCard({ card, selected, onClick, small }) {
         </div>
       )}
       {!isJoker && !small && isFace && (
-        <div style={{ position:'absolute', top:'18px', left:'5px', right:'5px', bottom:'18px' }}>
-          <FacePortrait rank={card.rank} suit={suit} color={color} w={w-10} h={h-36} />
+        <div style={{ position:'absolute', top:'16px', left:'3px', right:'3px', bottom:'16px', overflow:'hidden', borderRadius:'3px' }}>
+          <FacePortrait rank={card.rank} suit={suit} w={w-6} h={h-32} />
         </div>
       )}
       {!isJoker && !small && !isFace && pips && (
