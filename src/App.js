@@ -51,24 +51,74 @@ const S = {
 };
 
 // ── Card component ────────────────────────────────────────────────────────────
-function FacePortrait({ rank, suit, w, h }) {
-  // deck-of-cards.js.org face SVG URL pattern
-  // suits: ♠=1, ♥=2, ♦=3, ♣=4  ranks: J=11, Q=12, K=13
-  const SUIT_NUM = { '\u2660': 1, '\u2665': 2, '\u2663': 3, '\u2666': 4 };
-  const RANK_NUM = { 'J': 11, 'Q': 12, 'K': 13 };
-  const s = SUIT_NUM[suit];
-  const r = RANK_NUM[rank];
-  if (!s || !r) return null;
-  const url = `https://deck-of-cards.js.org/faces/${s}_${r}.svg`;
+function FacePortrait({ rank, suit, color, w, h }) {
+  const isRed = color === '#cc2200';
+  const cx = w / 2;
+  const innerW = w - 10;
+  const innerH = h - 4;
+
+  const faceY = rank === 'K' ? 22 : rank === 'Q' ? 20 : 21;
+  const faceRx = rank === 'Q' ? 10 : 9;
+  const faceRy = rank === 'Q' ? 12 : 10;
+
+  const hairCol = isRed ? '#7a1a00' : '#1a0a00';
+  const skinCol = '#f5d5a0';
+  const clothCol = isRed ? '#cc2200' : '#0a1a4a';
+  const crownCol = '#c9a140';
+
   return (
-    <img
-      src={url}
-      width={w}
-      height={h}
-      alt={`${rank} of ${suit}`}
-      style={{ display: 'block', objectFit: 'cover', borderRadius: '2px' }}
-      onError={e => { e.target.style.display = 'none'; }}
-    />
+    <svg width={innerW} height={innerH} viewBox={`0 0 ${innerW} ${innerH}`} style={{display:'block'}}>
+      <rect width={innerW} height={innerH} fill={isRed ? '#fff5f5' : '#f5f5ff'} rx="3"/>
+      <rect x="1.5" y="1.5" width={innerW-3} height={innerH-3} fill="none" stroke={color} strokeWidth="1" rx="2" opacity="0.4"/>
+
+      {rank === 'K' && <>
+        <polygon points={`5,20 ${cx-6},12 ${cx},6 ${cx+6},12 ${innerW-5},20`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <rect x="4" y="19" width={innerW-8} height="4" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <circle cx={cx} cy="8" r="3" fill="#cc3333"/>
+        <circle cx={cx-7} cy="13" r="2" fill="#3333cc"/>
+        <circle cx={cx+7} cy="13" r="2" fill="#33cc33"/>
+      </>}
+      {rank === 'Q' && <>
+        <polygon points={`8,19 ${cx-5},13 ${cx},8 ${cx+5},13 ${innerW-8},19`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <rect x="7" y="18" width={innerW-14} height="3" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <circle cx={cx} cy="10" r="2.5" fill={isRed ? '#cc3333' : '#3333cc'}/>
+      </>}
+      {rank === 'J' && <>
+        <path d={`M${cx-10},20 Q${cx-6},8 ${cx},6 Q${cx+6},8 ${cx+10},20 Z`} fill={clothCol} opacity="0.9"/>
+        <circle cx={cx} cy="5" r="3" fill={isRed ? '#e05252' : '#4466cc'}/>
+      </>}
+
+      {rank === 'K' && <ellipse cx={cx} cy={faceY+2} rx={faceRx+3} ry={faceRy+6} fill={hairCol}/>}
+      {rank === 'Q' && <>
+        <ellipse cx={cx} cy={faceY+2} rx={faceRx+4} ry={faceRy+8} fill={hairCol}/>
+        <path d={`M${cx-faceRx-2},${faceY+6} Q${cx-faceRx-8},${faceY+12} ${cx-faceRx-4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
+        <path d={`M${cx+faceRx+2},${faceY+6} Q${cx+faceRx+8},${faceY+12} ${cx+faceRx+4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
+      </>}
+      {rank === 'J' && <ellipse cx={cx} cy={faceY+1} rx={faceRx+2} ry={faceRy+2} fill={hairCol}/>}
+
+      <ellipse cx={cx} cy={faceY+4} rx={faceRx} ry={faceRy} fill={skinCol}/>
+
+      <ellipse cx={cx-4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
+      <ellipse cx={cx+4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
+      <circle cx={cx-3.5} cy={faceY+0.8} r="0.6" fill="white"/>
+      <circle cx={cx+4.5} cy={faceY+0.8} r="0.6" fill="white"/>
+
+      <path d={`M${cx-6},${faceY-2} Q${cx-4},${faceY-3.5} ${cx-2},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
+      <path d={`M${cx+2},${faceY-2} Q${cx+4},${faceY-3.5} ${cx+6},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
+
+      <path d={`M${cx},${faceY+3} Q${cx+2},${faceY+6} ${cx},${faceY+7}`} fill="none" stroke="#c8a070" strokeWidth="0.8"/>
+
+      {rank === 'K' && <>
+        <path d={`M${cx-5},${faceY+8} Q${cx},${faceY+10} ${cx+5},${faceY+8}`} fill="none" stroke={hairCol} strokeWidth="1.5" strokeLinecap="round"/>
+        <ellipse cx={cx} cy={faceY+11} rx="5" ry="3" fill={hairCol} opacity="0.7"/>
+      </>}
+      {rank === 'Q' && <path d={`M${cx-4},${faceY+8} Q${cx},${faceY+11} ${cx+4},${faceY+8}`} fill="none" stroke={isRed?'#cc2200':'#883333'} strokeWidth="1.5" strokeLinecap="round"/>}
+      {rank === 'J' && <path d={`M${cx-3},${faceY+8} Q${cx},${faceY+10} ${cx+3},${faceY+8}`} fill="none" stroke="#883333" strokeWidth="1" strokeLinecap="round"/>}
+
+      <path d={`M${cx-innerW/2+2},${innerH} L${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+8} L${cx+8},${faceY+faceRy+4} L${cx+innerW/2-2},${innerH}`} fill={clothCol}/>
+      <path d={`M${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+6} L${cx+8},${faceY+faceRy+4}`} fill="none" stroke={isRed?'#ff9999':'#9999ff'} strokeWidth="1"/>
+      <text x={cx} y={innerH-8} textAnchor="middle" fontSize="10" fill={isRed?'#ffaaaa':'#aaaaff'} opacity="0.8">{suit}</text>
+    </svg>
   );
 }
 
@@ -135,8 +185,8 @@ function PlayingCard({ card, selected, onClick, small }) {
         </div>
       )}
       {!isJoker && !small && isFace && (
-        <div style={{ position:'absolute', top:'16px', left:'3px', right:'3px', bottom:'16px', overflow:'hidden', borderRadius:'3px' }}>
-          <FacePortrait rank={card.rank} suit={suit} w={w-6} h={h-32} />
+        <div style={{ position:'absolute', top:'18px', left:'5px', right:'5px', bottom:'18px' }}>
+          <FacePortrait rank={card.rank} suit={suit} color={color} w={w-10} h={h-36} />
         </div>
       )}
       {!isJoker && !small && !isFace && pips && (
@@ -264,6 +314,7 @@ export default function App() {
       dealSequence: sequence,   // full sequence of {seat, card}
       dealIndex: 0,             // how many cards have been dealt so far
       dealComplete: false,
+      trumpConfirmed: [],   // seats who confirmed they pass on declaring
       kitty,
       kittyHolder: null,          // set after dealing: trump declarer (round 1) or first-card seat
       trumpDeclaration: null,
@@ -291,32 +342,55 @@ export default function App() {
   // ── Auto-deal animation ──────────────────────────────────────────────────
   useEffect(() => {
     if (!game || game.phase !== 'dealing' || game.dealComplete) return;
-    if (game.dealIndex >= (game.dealSequence?.length || 0)) {
-      // All cards dealt — check kitty for trump
-      if (!game.trumpSuit) {
-        const trumpNum = game.trumpNumber;
-        let resolvedSuit = null;
-        // Check kitty one by one for trump number
-        for (const card of (game.kitty || [])) {
-          if (card.rank === trumpNum && card.suit !== 'JOKER') {
-            resolvedSuit = card.suit;
-            break;
-          }
-        }
-        // Fallback to first card dealt
-        if (!resolvedSuit) resolvedSuit = game.firstCardSuit;
-        if (mySeat === 0) { // host resolves this
-          const kittyHolder = game.firstCardSeat ?? 0;
-          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true, log: [...(game.log||[]), `No trump declared — trump suit set to ${resolvedSuit}. ${room.players[kittyHolder]?.name} holds the kitty.`] } });
-        }
-      } else {
+
+    // Check if all players confirmed pass mid-deal — resolve immediately
+    if (!game.trumpSuit) {
+      const midConfirmed = game.trumpConfirmed || [];
+      if (midConfirmed.length >= 4) {
         if (mySeat === 0) {
-          // Trump was declared — kittyHolder is the declarer (round 1 rule)
+          const trumpNum = game.trumpNumber;
+          let resolvedSuit = null;
+          for (const card of (game.kitty || [])) {
+            if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
+          }
+          if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
+          const kittyHolder = game.firstCardSeat ?? 0;
+          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
+            log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players[kittyHolder]?.name} holds the kitty.`] } });
+        }
+        return;
+      }
+    }
+
+    if (game.dealIndex >= (game.dealSequence?.length || 0)) {
+      // All cards dealt
+      if (game.trumpSuit) {
+        // Trump already declared — just finalize
+        if (mySeat === 0) {
           const kittyHolder = game.roundNum === 1
             ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
             : (game.firstCardSeat ?? 0);
           updateRoom(room.id, { game: { ...game, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
         }
+      } else {
+        // No trump declared yet — wait for all 4 players to confirm they pass
+        const confirmed = game.trumpConfirmed || [];
+        if (confirmed.length >= 4) {
+          // All confirmed — stop dealing and auto-resolve from kitty/first card
+          if (mySeat === 0) {
+            const trumpNum = game.trumpNumber;
+            let resolvedSuit = null;
+            for (const card of (game.kitty || [])) {
+              if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
+            }
+            if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
+            const kittyHolder = game.firstCardSeat ?? 0;
+            updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
+              log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players[kittyHolder]?.name} holds the kitty.`] } });
+          }
+          return; // stop the deal timer
+        }
+        // else: waiting for players to confirm — UI handles this
       }
       return;
     }
@@ -389,6 +463,13 @@ export default function App() {
       log: [...(game.log || []), logMsg],
     }});
     setSelectedIds([]);
+  };
+
+  const handleConfirmPass = async () => {
+    if (!game) return;
+    const confirmed = game.trumpConfirmed || [];
+    if (confirmed.includes(mySeat)) return; // already confirmed
+    await updateRoom(room.id, { game: { ...game, trumpConfirmed: [...confirmed, mySeat] } });
   };
 
   const handleTakeKitty = async () => {
@@ -556,6 +637,7 @@ export default function App() {
         dealSequence: sequence,
         dealIndex: 0,
         dealComplete: false,
+        trumpConfirmed: [],
         firstCardSuit: sequence[0]?.card?.suit || '♠',
         firstCardSeat,
         kitty,
@@ -635,7 +717,7 @@ export default function App() {
           onDeclareTrump={handleDeclareTrump} onTakeKitty={handleTakeKitty}
           onDiscardKitty={handleDiscardKitty} onPlayCards={handlePlayCards}
           onNextRound={handleNextRound} playerId={playerId}
-          onChallenge={handleChallenge}
+          onChallenge={handleChallenge} onConfirmPass={handleConfirmPass}
         />
       )}
     </div>
@@ -644,7 +726,7 @@ export default function App() {
 }
 
 // ── Game Screen ───────────────────────────────────────────────────────────────
-function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge }) {
+function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onConfirmPass }) {
   const [selectedCompIdx, setSelectedCompIdx] = useState(null);
   const isMyTurn = game.currentTurn === mySeat;
   useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
@@ -737,9 +819,38 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
               : 'Select 2+ cards of the same rank to declare trump. You can declare any time during dealing.'}
           </div>
 
-          <button style={S.btn(selectedCards.length >= 2 ? GOLD : '#333')} onClick={onDeclareTrump}>
+          <button style={S.btn(selectedCards.length >= 1 ? GOLD : '#333')} onClick={onDeclareTrump}>
             Declare Trump ({selectedCards.length} selected)
           </button>
+
+          {/* Pass button — always visible during dealing if no trump declared */}
+          {!game.trumpSuit && (() => {
+            const confirmed = game.trumpConfirmed || [];
+            const iConfirmed = confirmed.includes(mySeat);
+            const waitingFor = [0,1,2,3].filter(s => !confirmed.includes(s)).map(s => room.players[s]?.name).filter(Boolean);
+            return (
+              <div style={{ marginTop: '12px', padding: '12px', background: '#1a1200', border: `1px solid ${GOLD}44`, borderRadius: '8px' }}>
+                <div style={{ color: GOLD, fontWeight: 700, fontSize: '13px', marginBottom: '8px' }}>
+                  ⚠ Dealing complete — no trump declared yet
+                </div>
+                <div style={{ color: MUTED, fontSize: '12px', marginBottom: '10px' }}>
+                  If nobody declares, trump will be decided from the kitty. Confirm you're passing.
+                </div>
+                {!iConfirmed ? (
+                  <button style={S.btn(RED)} onClick={onConfirmPass}>
+                    I pass — decide trump from kitty
+                  </button>
+                ) : (
+                  <div style={{ color: GREEN, fontSize: '12px' }}>
+                    ✓ You passed. Waiting for: {waitingFor.join(', ') || 'everyone confirmed!'}
+                  </div>
+                )}
+                <div style={{ fontSize: '11px', color: MUTED, marginTop: '6px' }}>
+                  Confirmed: {confirmed.length}/4
+                </div>
+              </div>
+            );
+          })()}
 
           {isKittyHolder && game.dealComplete && (
             <button style={{ ...S.btn(GREEN), marginTop: '8px' }} onClick={onTakeKitty}>
