@@ -51,8 +51,104 @@ const S = {
 };
 
 // ── Card component ────────────────────────────────────────────────────────────
+function FacePortrait({ rank, suit, color, w, h }) {
+  const isRed = color === '#cc2200';
+  const cx = w / 2;
+  const innerW = w - 10;
+  const innerH = h - 4;
+
+  // Crown SVG path (scaled to innerW)
+  const crownY = 6;
+  const crownH = 12;
+  const crownPath = `M4,${crownY+crownH} L4,${crownY+4} L${innerW/4},${crownY+crownH/2} L${innerW/2},${crownY} L${innerW*3/4},${crownY+crownH/2} L${innerW-4},${crownY+4} L${innerW-4},${crownY+crownH} Z`;
+
+  // Jack: young face, simple hat
+  // Queen: oval face, crown + hair curls
+  // King: beard, large crown
+
+  const faceY = rank === 'K' ? 22 : rank === 'Q' ? 20 : 21;
+  const faceRx = rank === 'Q' ? 10 : 9;
+  const faceRy = rank === 'Q' ? 12 : 10;
+
+  // Hair color: court cards traditionally use dark hair (kings/jacks) or styled (queens)
+  const hairCol = isRed ? '#7a1a00' : '#1a0a00';
+  const skinCol = '#f5d5a0';
+  const clothCol = isRed ? '#cc2200' : '#0a1a4a';
+  const crownCol = '#c9a140';
+
+  return (
+    <svg width={innerW} height={innerH} viewBox={`0 0 ${innerW} ${innerH}`} style={{display:'block'}}>
+      {/* Background */}
+      <rect width={innerW} height={innerH} fill={isRed ? '#fff5f5' : '#f5f5ff'} rx="3"/>
+      {/* Decorative border */}
+      <rect x="1.5" y="1.5" width={innerW-3} height={innerH-3} fill="none" stroke={color} strokeWidth="1" rx="2" opacity="0.4"/>
+
+      {/* === CROWN (Q and K) or HAT (J) === */}
+      {rank === 'K' && <>
+        <polygon points={`5,20 ${cx-6},12 ${cx},6 ${cx+6},12 ${innerW-5},20`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <rect x="4" y="19" width={innerW-8} height="4" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <circle cx={cx} cy="8" r="3" fill="#cc3333"/>
+        <circle cx={cx-7} cy="13" r="2" fill="#3333cc"/>
+        <circle cx={cx+7} cy="13" r="2" fill="#33cc33"/>
+      </>}
+      {rank === 'Q' && <>
+        <polygon points={`8,19 ${cx-5},13 ${cx},8 ${cx+5},13 ${innerW-8},19`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <rect x="7" y="18" width={innerW-14} height="3" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
+        <circle cx={cx} cy="10" r="2.5" fill={isRed ? '#cc3333' : '#3333cc'}/>
+      </>}
+      {rank === 'J' && <>
+        {/* Jester-style hat */}
+        <path d={`M${cx-10},20 Q${cx-6},8 ${cx},6 Q${cx+6},8 ${cx+10},20 Z`} fill={clothCol} opacity="0.9"/>
+        <circle cx={cx} cy="5" r="3" fill={isRed ? '#e05252' : '#4466cc'}/>
+      </>}
+
+      {/* === HAIR === */}
+      {rank === 'K' && <ellipse cx={cx} cy={faceY+2} rx={faceRx+3} ry={faceRy+6} fill={hairCol}/>}
+      {rank === 'Q' && <>
+        <ellipse cx={cx} cy={faceY+2} rx={faceRx+4} ry={faceRy+8} fill={hairCol}/>
+        {/* Hair curls */}
+        <path d={`M${cx-faceRx-2},${faceY+6} Q${cx-faceRx-8},${faceY+12} ${cx-faceRx-4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
+        <path d={`M${cx+faceRx+2},${faceY+6} Q${cx+faceRx+8},${faceY+12} ${cx+faceRx+4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
+      </>}
+      {rank === 'J' && <ellipse cx={cx} cy={faceY+1} rx={faceRx+2} ry={faceRy+2} fill={hairCol}/>}
+
+      {/* === FACE === */}
+      <ellipse cx={cx} cy={faceY+4} rx={faceRx} ry={faceRy} fill={skinCol}/>
+
+      {/* === EYES === */}
+      <ellipse cx={cx-4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
+      <ellipse cx={cx+4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
+      <circle cx={cx-3.5} cy={faceY+0.8} r="0.6" fill="white"/>
+      <circle cx={cx+4.5} cy={faceY+0.8} r="0.6" fill="white"/>
+
+      {/* === EYEBROWS === */}
+      <path d={`M${cx-6},${faceY-2} Q${cx-4},${faceY-3.5} ${cx-2},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
+      <path d={`M${cx+2},${faceY-2} Q${cx+4},${faceY-3.5} ${cx+6},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
+
+      {/* === NOSE === */}
+      <path d={`M${cx},${faceY+3} Q${cx+2},${faceY+6} ${cx},${faceY+7}`} fill="none" stroke="#c8a070" strokeWidth="0.8"/>
+
+      {/* === MOUTH === */}
+      {rank === 'K' && <>
+        {/* King has mustache + beard */}
+        <path d={`M${cx-5},${faceY+8} Q${cx},${faceY+10} ${cx+5},${faceY+8}`} fill="none" stroke={hairCol} strokeWidth="1.5" strokeLinecap="round"/>
+        <ellipse cx={cx} cy={faceY+11} rx="5" ry="3" fill={hairCol} opacity="0.7"/>
+      </>}
+      {rank === 'Q' && <path d={`M${cx-4},${faceY+8} Q${cx},${faceY+11} ${cx+4},${faceY+8}`} fill="none" stroke={isRed?'#cc2200':'#883333'} strokeWidth="1.5" strokeLinecap="round"/>}
+      {rank === 'J' && <path d={`M${cx-3},${faceY+8} Q${cx},${faceY+10} ${cx+3},${faceY+8}`} fill="none" stroke="#883333" strokeWidth="1" strokeLinecap="round"/>}
+
+      {/* === COLLAR / CLOTHING === */}
+      <path d={`M${cx-innerW/2+2},${innerH} L${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+8} L${cx+8},${faceY+faceRy+4} L${cx+innerW/2-2},${innerH}`} fill={clothCol}/>
+      {/* Collar trim */}
+      <path d={`M${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+6} L${cx+8},${faceY+faceRy+4}`} fill="none" stroke={isRed?'#ff9999':'#9999ff'} strokeWidth="1"/>
+      {/* Suit symbol on chest */}
+      <text x={cx} y={innerH-8} textAnchor="middle" fontSize="10" fill={isRed?'#ffaaaa':'#aaaaff'} opacity="0.8">{suit}</text>
+    </svg>
+  );
+}
+
 function PlayingCard({ card, selected, onClick, small }) {
-  const isRed = card.suit === '♥' || card.suit === '♦' || card.suit === 'JOKER';
+  const isRed = card.suit === '\u2665' || card.suit === '\u2666' || card.suit === 'JOKER';
   const isJoker = card.suit === 'JOKER';
   const rank = isJoker ? (card.rank === 'BIG' ? 'BIG' : 'SML') : card.rank;
   const suit = card.suit;
@@ -61,6 +157,7 @@ function PlayingCard({ card, selected, onClick, small }) {
   const h = small ? 56 : 92;
   const fs = small ? 9 : 13;
   const marginLeft = selected ? (small ? -10 : -14) : (small ? -14 : -22);
+
   const PIP_LAYOUTS = {
     'A':  [[0.5,0.5,false]],
     '2':  [[0.2,0.5,false],[0.8,0.5,true]],
@@ -73,18 +170,14 @@ function PlayingCard({ card, selected, onClick, small }) {
     '9':  [[0.15,0.28,false],[0.15,0.72,false],[0.37,0.28,false],[0.37,0.72,false],[0.5,0.5,false],[0.63,0.28,true],[0.63,0.72,true],[0.85,0.28,true],[0.85,0.72,true]],
     '10': [[0.12,0.28,false],[0.12,0.72,false],[0.32,0.28,false],[0.32,0.72,false],[0.48,0.28,false],[0.48,0.72,false],[0.68,0.28,true],[0.68,0.72,true],[0.88,0.28,true],[0.88,0.72,true]],
   };
-  const FACE = {
-    'J': { bg:'#ddeeff', inner:'#aaccff33', symbol:'⚔️', label:'JACK',  col:'#1a3a7a' },
-    'Q': { bg:'#ffdded', inner:'#ffaabb33', symbol:'♛', label:'QUEEN', col:'#8a1040' },
-    'K': { bg:'#fff5d0', inner:'#ffe89933', symbol:'♚', label:'KING',  col:'#7a4a00' },
-  };
+
   const isFace = ['J','Q','K'].includes(card.rank);
   const pips = PIP_LAYOUTS[card.rank];
   const pipSize = card.rank === 'A' ? (small ? 14 : 26) : (small ? 8 : 12);
+
   const cardStyle = {
     display: 'inline-block', width: `${w}px`, height: `${h}px`, minWidth: `${w}px`,
-    background: (isFace && !small) ? `linear-gradient(160deg,${FACE[card.rank].bg},#fff)` :
-                selected ? 'linear-gradient(160deg,#fffdf0,#fff6cc)' : 'linear-gradient(160deg,#ffffff,#f5f5f5)',
+    background: 'linear-gradient(160deg,#ffffff,#f5f5f5)',
     border: `${selected ? 2 : 1.5}px solid ${selected ? GOLD : '#bbb'}`,
     borderRadius: small ? '4px' : '7px', cursor: 'pointer',
     boxShadow: selected ? `0 -12px 24px ${GOLD}66,0 4px 10px rgba(0,0,0,0.35)` : '0 2px 6px rgba(0,0,0,0.28)',
@@ -92,47 +185,43 @@ function PlayingCard({ card, selected, onClick, small }) {
     position: 'relative', marginLeft: `${marginLeft}px`,
     flexShrink: 0, overflow: 'hidden', userSelect: 'none', zIndex: selected ? 10 : 'auto',
   };
+
   const Corner = ({ flip }) => (
     <div style={{
       position:'absolute', [flip?'bottom':'top']:'2px', [flip?'right':'left']:'3px',
       display:'flex', flexDirection:'column', alignItems:'center',
       transform: flip ? 'rotate(180deg)' : 'none', lineHeight: 1.1,
+      zIndex: 2,
     }}>
       <span style={{ fontSize:`${fs}px`, fontWeight:900, color, fontFamily:'Georgia,serif' }}>{rank}</span>
       {!small && !isJoker && <span style={{ fontSize:'9px', color, lineHeight:1 }}>{suit}</span>}
     </div>
   );
+
   return (
     <div style={cardStyle} onClick={onClick}>
       <Corner flip={false} />
       <Corner flip={true} />
       {isJoker && (
         <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', textAlign:'center' }}>
-          <div style={{ fontSize: small?'18px':'28px' }}>{card.rank === 'BIG' ? '🃏' : '🤡'}</div>
+          <div style={{ fontSize: small?'18px':'28px' }}>{card.rank === 'BIG' ? '\uD83C\uDCCF' : '\uD83E\uDD21'}</div>
           {!small && <div style={{ fontSize:'7px', color:'#888', marginTop:'2px', letterSpacing:'0.1em' }}>{card.rank} JOKER</div>}
         </div>
       )}
-      {!isJoker && !small && (
+      {!isJoker && !small && isFace && (
+        <div style={{ position:'absolute', top:'18px', left:'5px', right:'5px', bottom:'18px' }}>
+          <FacePortrait rank={card.rank} suit={suit} color={color} w={w-10} h={h-36} />
+        </div>
+      )}
+      {!isJoker && !small && !isFace && pips && (
         <div style={{ position:'absolute', top:`${Math.round(h*0.19)}px`, left:'4px', right:'4px', bottom:`${Math.round(h*0.19)}px` }}>
-          {isFace ? (
-            <div style={{
-              width:'100%', height:'100%', border:`2px solid ${FACE[card.rank].col}44`,
-              borderRadius:'4px', background: FACE[card.rank].inner,
-              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'2px'
-            }}>
-              <span style={{ fontSize:'22px', color:FACE[card.rank].col, lineHeight:1 }}>{FACE[card.rank].symbol}</span>
-              <span style={{ fontSize:'7px', fontWeight:700, color:FACE[card.rank].col, letterSpacing:'0.06em' }}>{suit} {FACE[card.rank].label} {suit}</span>
-              <span style={{ fontSize:'22px', color:FACE[card.rank].col, transform:'rotate(180deg)', lineHeight:1, marginTop:'2px' }}>{FACE[card.rank].symbol}</span>
-            </div>
-          ) : pips ? (
-            pips.map(([top,left,flip],i) => (
-              <span key={i} style={{
-                position:'absolute', top:`${top*100}%`, left:`${left*100}%`,
-                transform:`translate(-50%,-50%)${flip?' rotate(180deg)':''}`,
-                fontSize:`${pipSize}px`, color, lineHeight:1, display:'block',
-              }}>{suit}</span>
-            ))
-          ) : null}
+          {pips.map(([top,left,flip],i) => (
+            <span key={i} style={{
+              position:'absolute', top:`${top*100}%`, left:`${left*100}%`,
+              transform:`translate(-50%,-50%)${flip?' rotate(180deg)':''}`,
+              fontSize:`${pipSize}px`, color, lineHeight:1, display:'block',
+            }}>{suit}</span>
+          ))}
         </div>
       )}
     </div>
