@@ -286,7 +286,13 @@ export function canDeclareTrump(cards, currentDeclaration, trumpNumber) {
   const allJokers = cards.every(c => c.suit === 'JOKER');
   const allSameRank = cards.every(c => c.rank === cards[0].rank);
   if (!allSameRank && !allJokers) return false;
-  if (allJokers && cards.length < 2) return false;
+  // Jokers: must be all BIG or all SMALL (no mixing), and need 2+
+  if (allJokers) {
+    const allBig = cards.every(c => c.rank === 'BIG');
+    const allSmall = cards.every(c => c.rank === 'SMALL');
+    if (!allBig && !allSmall) return false; // mixed jokers not allowed
+    if (cards.length < 2) return false;
+  }
   if (!allJokers && cards[0].rank !== trumpNumber) return false;
   if (currentDeclaration) {
     if (currentDeclaration.locked) return false;
