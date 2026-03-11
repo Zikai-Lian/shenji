@@ -54,7 +54,7 @@ const S = {
 function FacePortrait({ rank, suit, w, h }) {
   // deck-of-cards.js.org face SVG URL pattern
   // suits: ♠=1, ♥=2, ♦=3, ♣=4  ranks: J=11, Q=12, K=13
-  const SUIT_NUM = { '\u2660': 1, '\u2665': 2, '\u2666': 3, '\u2663': 4 };
+  const SUIT_NUM = { '\u2660': 1, '\u2665': 2, '\u2663': 3, '\u2666': 4 };
   const RANK_NUM = { 'J': 11, 'Q': 12, 'K': 13 };
   const s = SUIT_NUM[suit];
   const r = RANK_NUM[rank];
