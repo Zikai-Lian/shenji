@@ -17,7 +17,7 @@ export async function createRoom(playerName) {
       code,
       state: 'lobby',
       game: null,
-      players: [{ id: playerId, name: playerName, seat: 0 }],
+      players: [{ id: playerId, name: playerName, seat: -1 }],  // host starts unseated
       host_id: playerId,
     })
     .select()
@@ -41,7 +41,7 @@ export async function joinRoom(code, playerName) {
   const playerId = crypto.randomUUID();
   // Find lowest available seat
   const takenSeats = new Set(room.players.map(p => p.seat));
-  const seat = [0, 1, 2, 3].find(s => !takenSeats.has(s)) ?? room.players.length;
+  const seat = -1; // Players start unseated and pick their own seat in lobby
   const updatedPlayers = [...room.players, { id: playerId, name: playerName, seat }];
 
   const { error: updateError } = await supabase
