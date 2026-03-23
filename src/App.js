@@ -262,9 +262,38 @@ export default function App() {
   const [joinCode, setJoinCode] = useState('');
   const [room, setRoom] = useState(null);
   const [playerId, setPlayerId] = useState(null);
+  const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const subRef = useRef(null);
+
+  // ── Restore session on refresh ───────────────────────────────────────────
+  useEffect(() => {
+    const saved = localStorage.getItem('shengji_session');
+    if (saved) {
+      try {
+        const { roomId, playerId: pid } = JSON.parse(saved);
+        // Re-fetch the room and rejoin if our seat is still there
+        supabase.from('rooms').select('*').eq('id', roomId).single()
+          .then(({ data, error }) => {
+            if (!error && data && data.players.find(p => p.id === pid)) {
+              setRoom(data);
+              setPlayerId(pid);
+              setScreen(data.state === 'game' ? 'game' : 'lobby');
+            } else {
+              // Room gone or player removed — clear stale session
+              localStorage.removeItem('shengji_session');
+            }
+            setRestoring(false);
+          });
+      } catch {
+        localStorage.removeItem('shengji_session');
+        setRestoring(false);
+      }
+    } else {
+      setRestoring(false);
+    }
+  }, []);
 
   // Game state (from room.game)
   const game = room?.game;
@@ -290,6 +319,7 @@ export default function App() {
     try {
       const { room: r, playerId: pid } = await createRoom(playerName.trim());
       setRoom(r); setPlayerId(pid); setScreen('lobby');
+      localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
   };
@@ -301,6 +331,7 @@ export default function App() {
     try {
       const { room: r, playerId: pid } = await joinRoom(joinCode, playerName.trim());
       setRoom(r); setPlayerId(pid); setScreen('lobby');
+      localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
   };
@@ -685,7 +716,12 @@ export default function App() {
       <div style={S.title}>升级</div>
       <div style={S.subtitle}>Sheng Ji · 3 Decks</div>
 
-      {screen === 'home' && (
+      {restoring && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
+          <div style={{ color: GOLD, fontSize: '14px', letterSpacing: '0.1em' }}>Reconnecting...</div>
+        </div>
+      )}
+      {!restoring && screen === 'home' && (
         <div style={S.card}>
           <div style={S.section}>
             <label style={S.label}>Your Name</label>
@@ -705,11 +741,11 @@ export default function App() {
         </div>
       )}
 
-      {screen === 'lobby' && room && (
+      {!restoring && screen === 'lobby' && room && (
         <LobbyScreen room={room} playerId={playerId} onStart={handleStartGame} />
       )}
 
-      {screen === 'game' && game && (
+      {!restoring && screen === 'game' && game && (
         <GameScreen
           game={game} room={room} mySeat={mySeat} myTeam={myTeam}
           sortedHand={sortedHand} selectedIds={selectedIds} toggleCard={toggleCard}
