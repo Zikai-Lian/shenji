@@ -206,11 +206,12 @@ function PlayingCard({ card, selected, onClick, small }) {
 
 
 // ── Lobby Screen ──────────────────────────────────────────────────────────────
-function LobbyScreen({ room, playerId, onStart, onKick, onClaimSeat, onLeave }) {
+function LobbyScreen({ room, playerId, onStart, onKick, onClaimSeat, onLeaveSeat, onLeave }) {
   const isHost = room.host_id === playerId;
-  const canStart = room.players.length === 4;
   const me = room.players.find(p => p.id === playerId);
-
+  const mySeatedSeat = me?.seat ?? -1; // -1 means spectating (no seat claimed)
+  const seatedCount = room.players.filter(p => p.seat !== -1).length;
+  const canStart = seatedCount === 4;
   const TEAM_A_COLOR = GOLD;
   const TEAM_B_COLOR = '#52a8a8';
 
@@ -223,107 +224,108 @@ function LobbyScreen({ room, playerId, onStart, onKick, onClaimSeat, onLeave }) 
           <span style={{ fontSize: '28px', fontWeight: 900, color: GOLD, letterSpacing: '0.3em' }}>{room.code}</span>
         </div>
 
-        {/* Team labels */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-          <div style={{ textAlign: 'center', fontSize: '11px', color: GOLD, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Team A</div>
-          <div style={{ textAlign: 'center', fontSize: '11px', color: TEAM_B_COLOR, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Team B</div>
-        </div>
-
-        {/* Seat grid: A=0,2 B=1,3 shown as 2 columns */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '20px' }}>
-          {[[0, 1], [2, 3]].map(([seatA, seatB]) =>
-            [seatA, seatB].map(seat => {
-              const player = room.players.find(p => p.seat === seat);
-              const isMe = player?.id === playerId;
-              const isHostPlayer = player?.id === room.host_id;
-              const isEmpty = !player;
-              const teamColor = seat % 2 === 0 ? TEAM_A_COLOR : TEAM_B_COLOR;
-              const canClaim = isEmpty && me; // I'm in the room and seat is free
-
-              return (
-                <div key={seat} style={{
-                  border: `1px solid ${isMe ? teamColor : isEmpty ? BORDER : BORDER}`,
-                  background: isMe ? `${teamColor}11` : SURFACE,
-                  borderRadius: '10px', padding: '12px', minHeight: '80px',
-                  display: 'flex', flexDirection: 'column', gap: '6px',
-                  position: 'relative',
-                }}>
-                  {/* Seat label */}
-                  <div style={{ fontSize: '10px', color: teamColor, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>
-                    Seat {seat + 1}
-                  </div>
-
-                  {isEmpty ? (
-                    /* Empty seat — show claim button if I don't already have this seat */
-                    me?.seat !== seat ? (
-                      <button
-                        style={{ ...S.btn(teamColor), padding: '6px 10px', fontSize: '11px', marginBottom: 0, opacity: 0.85 }}
-                        onClick={() => onClaimSeat(seat)}
-                      >
-                        Sit here
-                      </button>
-                    ) : (
-                      <span style={{ color: MUTED, fontSize: '12px', fontStyle: 'italic' }}>Empty</span>
-                    )
-                  ) : (
-                    /* Occupied seat */
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div style={{ color: isMe ? TEXT : TEXT, fontWeight: isMe ? 700 : 400, fontSize: '14px' }}>
-                          {player.name}
-                        </div>
-                        <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
-                          {isMe && <span style={S.badge(GREEN)}>YOU</span>}
-                          {isHostPlayer && <span style={S.badge(GOLD)}>HOST</span>}
-                        </div>
-                      </div>
-                      {/* Kick button — host can kick anyone except themselves */}
-                      {isHost && !isMe && (
-                        <button
-                          onClick={() => onKick(player.id)}
-                          style={{
-                            background: 'transparent', border: `1px solid #e0525244`, color: '#e05252',
-                            borderRadius: '6px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                          }}
-                        >
-                          Kick
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
+        {/* My status banner */}
+        <div style={{ background: mySeatedSeat === -1 ? '#1a1200' : `${mySeatedSeat % 2 === 0 ? TEAM_A_COLOR : TEAM_B_COLOR}11`,
+          border: `1px solid ${mySeatedSeat === -1 ? GOLD + '33' : mySeatedSeat % 2 === 0 ? TEAM_A_COLOR + '44' : TEAM_B_COLOR + '44'}`,
+          borderRadius: '8px', padding: '10px 14px', marginBottom: '18px',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: '13px', color: mySeatedSeat === -1 ? MUTED : TEXT }}>
+            {mySeatedSeat === -1 ? '👀 You are spectating — pick a seat below' : `✓ You are in Seat ${mySeatedSeat + 1} (${mySeatedSeat % 2 === 0 ? 'Team A' : 'Team B'})`}
+          </span>
+          {mySeatedSeat !== -1 && (
+            <button onClick={onLeaveSeat} style={{
+              background: 'transparent', border: '1px solid #55555588', color: MUTED,
+              borderRadius: '6px', padding: '3px 10px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit'
+            }}>Leave seat</button>
           )}
         </div>
 
-        {/* Team description */}
+        {/* Team labels */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+          <div style={{ textAlign: 'center', fontSize: '11px', color: TEAM_A_COLOR, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Team A</div>
+          <div style={{ textAlign: 'center', fontSize: '11px', color: TEAM_B_COLOR, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Team B</div>
+        </div>
+
+        {/* Seat grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '20px' }}>
+          {[0, 1, 2, 3].map(seat => {
+            const player = room.players.find(p => p.seat === seat);
+            const isMyCurrentSeat = seat === mySeatedSeat;
+            const isOccupied = !!player && player.seat === seat && player.seat !== -1;
+            const teamColor = seat % 2 === 0 ? TEAM_A_COLOR : TEAM_B_COLOR;
+            const canSit = !isOccupied && mySeatedSeat === -1; // only can sit if seat free AND I have no seat
+
+            return (
+              <div key={seat} style={{
+                border: `1px solid ${isMyCurrentSeat ? teamColor : isOccupied ? BORDER : BORDER + '88'}`,
+                background: isMyCurrentSeat ? `${teamColor}18` : isOccupied ? SURFACE : '#0d1117',
+                borderRadius: '10px', padding: '14px', minHeight: '90px',
+                display: 'flex', flexDirection: 'column', gap: '6px',
+              }}>
+                <div style={{ fontSize: '10px', color: teamColor, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>
+                  Seat {seat + 1}
+                </div>
+
+                {isOccupied ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flex: 1 }}>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: isMyCurrentSeat ? 700 : 400, color: TEXT }}>
+                        {player.name}
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
+                        {isMyCurrentSeat && <span style={S.badge(GREEN)}>YOU</span>}
+                        {player.id === room.host_id && <span style={S.badge(GOLD)}>HOST</span>}
+                      </div>
+                    </div>
+                    {isHost && !isMyCurrentSeat && (
+                      <button onClick={() => onKick(player.id)} style={{
+                        background: 'transparent', border: '1px solid #e0525244', color: '#e05252',
+                        borderRadius: '6px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
+                      }}>Kick</button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                    {canSit ? (
+                      <button onClick={() => onClaimSeat(seat)} style={{
+                        ...S.btn(teamColor), padding: '7px 10px', fontSize: '12px', marginBottom: 0
+                      }}>Sit here</button>
+                    ) : mySeatedSeat !== -1 && !isMyCurrentSeat ? (
+                      <span style={{ color: BORDER, fontSize: '12px', fontStyle: 'italic' }}>
+                        Leave your seat first
+                      </span>
+                    ) : (
+                      <span style={{ color: MUTED, fontSize: '12px', fontStyle: 'italic' }}>Empty</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         <div style={{ color: MUTED, fontSize: '12px', marginBottom: '16px', textAlign: 'center' }}>
           Seats 1 & 3 = Team A &nbsp;·&nbsp; Seats 2 & 4 = Team B
         </div>
 
-        {/* Start / waiting */}
         {isHost ? (
           <button style={S.btn(canStart ? GOLD : '#444')} disabled={!canStart} onClick={onStart}>
-            {canStart ? '▶ Start Game' : `Waiting for players (${room.players.length}/4)`}
+            {canStart ? '▶ Start Game' : `Waiting for all seats (${seatedCount}/4)`}
           </button>
         ) : (
-          <div style={{ textAlign: 'center', color: MUTED, fontSize: '13px' }}>
+          <div style={{ textAlign: 'center', color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
             Waiting for host to start...
           </div>
         )}
-        <button
-          onClick={onLeave}
-          style={{ background: 'transparent', border: '1px solid #e0525244', color: '#e05252',
-            borderRadius: '8px', padding: '10px', fontSize: '13px', cursor: 'pointer',
-            width: '100%', marginTop: '10px', fontFamily: 'inherit' }}>
-          Leave Room
-        </button>
+        <button onClick={onLeave} style={{
+          background: 'transparent', border: '1px solid #e0525244', color: '#e05252',
+          borderRadius: '8px', padding: '10px', fontSize: '13px', cursor: 'pointer',
+          width: '100%', marginTop: '8px', fontFamily: 'inherit'
+        }}>Leave Room</button>
       </div>
     </div>
   );
 }
-
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
@@ -526,10 +528,20 @@ export default function App() {
 
   const handleClaimSeat = async (seat) => {
     if (!room) return;
-    // Check seat is still free
+    // Only claim if seat is free and I have no seat
     if (room.players.find(p => p.seat === seat)) return;
+    const me = room.players.find(p => p.id === playerId);
+    if (me?.seat !== -1 && me?.seat !== undefined) return; // already seated
     const updated = room.players.map(p =>
       p.id === playerId ? { ...p, seat } : p
+    );
+    await updateRoom(room.id, { players: updated });
+  };
+
+  const handleLeaveSeat = async () => {
+    if (!room) return;
+    const updated = room.players.map(p =>
+      p.id === playerId ? { ...p, seat: -1 } : p
     );
     await updateRoom(room.id, { players: updated });
   };
@@ -853,7 +865,7 @@ export default function App() {
       )}
 
       {!restoring && screen === 'lobby' && room && (
-        <LobbyScreen room={room} playerId={playerId} onStart={handleStartGame} onKick={handleKick} onClaimSeat={handleClaimSeat} onLeave={handleLeave} />
+        <LobbyScreen room={room} playerId={playerId} onStart={handleStartGame} onKick={handleKick} onClaimSeat={handleClaimSeat} onLeaveSeat={handleLeaveSeat} onLeave={handleLeave} />
       )}
 
       {!restoring && screen === 'game' && game && (
