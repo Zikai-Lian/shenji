@@ -39,7 +39,9 @@ export async function joinRoom(code, playerName) {
   if (room.players.length >= 4) throw new Error('Room is full');
 
   const playerId = crypto.randomUUID();
-  const seat = room.players.length;
+  // Find lowest available seat
+  const takenSeats = new Set(room.players.map(p => p.seat));
+  const seat = [0, 1, 2, 3].find(s => !takenSeats.has(s)) ?? room.players.length;
   const updatedPlayers = [...room.players, { id: playerId, name: playerName, seat }];
 
   const { error: updateError } = await supabase
