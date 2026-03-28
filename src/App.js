@@ -986,6 +986,9 @@ export default function App() {
       )}
 
       {!restoring && screen === 'game' && game && (
+        <>{console.log('[RENDER] game.trumpSuit:', game?.trumpSuit, 'game.phase:', game?.phase) || null}</>
+      )}
+      {!restoring && screen === 'game' && game && (
         <GameScreen
           game={game} room={room} mySeat={mySeat} myTeam={myTeam}
           sortedHand={sortedHand} selectedIds={selectedIds} toggleCard={toggleCard}
