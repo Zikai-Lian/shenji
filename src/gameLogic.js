@@ -660,133 +660,125 @@ export function decomposeCombo(cards, trumpSuit, trumpNumber) {
 }
 
 // Check if a hand can beat a specific sub-component of a big play.
-// For the challenge system: can this hand BEAT (not just match) the component?
-// Only considers beating within the SAME suit (or trump beating non-trump).
-// Does NOT trigger on "I have trump therefore I must challenge every non-trump single"
-// — that rule only applies to follow-suit enforcement, not challenges.
+// Only returns true if the hand has a card/combo that STRICTLY beats the component
+// in the same suit context (or trump beating non-trump).
 function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
   const { type, cards } = component;
-  const suit = getLeadSuit(cards, trumpSuit, trumpNumber);
-  const suitCards = getSuitCards(hand, suit, trumpSuit, trumpNumber);
+  const leadSuit = getLeadSuit(cards, trumpSuit, trumpNumber);
 
-  // Helper: get numeric rank of a card within its suit context
-  const cardRankVal = (card) =>
-    suit === 'TRUMP' || isTrump(card, trumpSuit, trumpNumber)
-      ? trumpRank(card, trumpSuit, trumpNumber)
-      : RANKS.indexOf(card.rank);
+  // Get all cards in hand that are in the same suit as the component
+  const suitCards = getSuitCards(hand, leadSuit, trumpSuit, trumpNumber);
+
+  // For non-trump leads: also check if hand has any trump at all
+  const handTrump = leadSuit !== 'TRUMP'
+    ? hand.filter(c => isTrump(c, trumpSuit, trumpNumber))
+    : [];
+
+  // Rank of a card within trump ordering
+  const tr = (card) => trumpRank(card, trumpSuit, trumpNumber);
+  // Rank of a card within its non-trump suit
+  const sr = (card) => RANKS.indexOf(card.rank);
 
   if (type === 'single') {
-    const ledRank = cardRankVal(cards[0]);
-    if (suit === 'TRUMP') {
-      // Must have a higher trump
-      return suitCards.some(c => trumpRank(c, trumpSuit, trumpNumber) > ledRank);
+    const ledCard = cards[0];
+    if (leadSuit === 'TRUMP') {
+      // Need a higher trump card
+      return suitCards.some(c => tr(c) > tr(ledCard));
     } else {
-      // Must have a higher card of the SAME non-trump suit
-      // (trump beating non-trump in a big play challenge is NOT a forced challenge)
-      return suitCards.some(c => RANKS.indexOf(c.rank) > RANKS.indexOf(cards[0].rank));
+      // Need a higher card of the SAME non-trump suit specifically
+      // Trump does NOT force a challenge on a non-trump single in a big play
+      return suitCards.some(c => sr(c) > sr(ledCard));
     }
   }
 
   if (type === 'pair') {
-    const ledRank = cardRankVal(cards[0]);
-    // Need a pair of higher rank in same suit
+    const ledRank = leadSuit === 'TRUMP' ? tr(cards[0]) : sr(cards[0]);
+    // Build groups of 2+ in suitCards
     const groups = {};
     for (const c of suitCards) {
       const k = cardKey(c, trumpSuit, trumpNumber);
-      groups[k] = (groups[k] || 0) + 1;
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(c);
     }
-    for (const [k, cnt] of Object.entries(groups)) {
-      if (cnt >= 2) {
-        const sample = suitCards.find(c => cardKey(c, trumpSuit, trumpNumber) === k);
-        if (!sample) continue;
-        if (cardRankVal(sample) > ledRank) return true;
+    for (const [k, grp] of Object.entries(groups)) {
+      if (grp.length >= 2) {
+        const r = leadSuit === 'TRUMP' ? tr(grp[0]) : sr(grp[0]);
+        if (r > ledRank) return true;
       }
     }
-    // Trump pair beats non-trump pair (same suit rule — opponent has trump pairs)
-    if (suit !== 'TRUMP') {
-      const trumpGroups = {};
-      for (const c of getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber)) {
-        const tk = cardKey(c, trumpSuit, trumpNumber);
-        trumpGroups[tk] = (trumpGroups[tk] || 0) + 1;
+    // Trump pair beats non-trump pair
+    if (leadSuit !== 'TRUMP') {
+      const tGroups = {};
+      for (const c of handTrump) {
+        const k = cardKey(c, trumpSuit, trumpNumber);
+        if (!tGroups[k]) tGroups[k] = 0;
+        tGroups[k]++;
       }
-      if (Object.values(trumpGroups).some(n => n >= 2)) return true;
+      if (Object.values(tGroups).some(n => n >= 2)) return true;
     }
     return false;
   }
 
   if (type === 'triple') {
-    const ledRank = cardRankVal(cards[0]);
+    const ledRank = leadSuit === 'TRUMP' ? tr(cards[0]) : sr(cards[0]);
     const groups = {};
     for (const c of suitCards) {
       const k = cardKey(c, trumpSuit, trumpNumber);
-      groups[k] = (groups[k] || 0) + 1;
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(c);
     }
-    for (const [k, cnt] of Object.entries(groups)) {
-      if (cnt >= 3) {
-        const sample = suitCards.find(c => cardKey(c, trumpSuit, trumpNumber) === k);
-        if (!sample) continue;
-        if (cardRankVal(sample) > ledRank) return true;
+    for (const [k, grp] of Object.entries(groups)) {
+      if (grp.length >= 3) {
+        const r = leadSuit === 'TRUMP' ? tr(grp[0]) : sr(grp[0]);
+        if (r > ledRank) return true;
       }
     }
-    if (suit !== 'TRUMP') {
-      const tg = {};
-      for (const c of getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber)) {
-        const tk = cardKey(c, trumpSuit, trumpNumber);
-        tg[tk] = (tg[tk] || 0) + 1;
+    if (leadSuit !== 'TRUMP') {
+      const tGroups = {};
+      for (const c of handTrump) {
+        const k = cardKey(c, trumpSuit, trumpNumber);
+        if (!tGroups[k]) tGroups[k] = 0;
+        tGroups[k]++;
       }
-      if (Object.values(tg).some(n => n >= 3)) return true;
+      if (Object.values(tGroups).some(n => n >= 3)) return true;
     }
     return false;
   }
 
   if (type === 'pair_tractor' || type === 'triple_tractor') {
     const groupSize = type === 'triple_tractor' ? 3 : 2;
-
-    // Find the max rank in the led tractor
-    let maxLedRank = -1;
+    // Find highest rank in the led tractor
+    let maxLedRank = -Infinity;
     for (const card of cards) {
-      const r = cardRankVal(card);
+      const r = leadSuit === 'TRUMP' ? tr(card) : sr(card);
       if (r > maxLedRank) maxLedRank = r;
     }
-
-    // Build group map for hand's suit cards
+    // Build eligible keys (have groupSize+ copies) from suitCards
     const hg = {};
     for (const c of suitCards) {
       const k = cardKey(c, trumpSuit, trumpNumber);
-      hg[k] = (hg[k] || 0) + 1;
+      if (!hg[k]) hg[k] = { cards: [], key: k };
+      hg[k].cards.push(c);
     }
-
-    // Get eligible keys (has enough copies)
-    const eligibleKeys = Object.keys(hg).filter(k => hg[k] >= groupSize);
-    if (eligibleKeys.length < 2) {
-      // Can't form a tractor — but trump tractor beats non-trump
-      if (suit !== 'TRUMP') {
-        return hasTractor(getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber), groupSize, 'TRUMP', trumpSuit, trumpNumber);
+    const eligible = Object.values(hg).filter(g => g.cards.length >= groupSize);
+    if (eligible.length >= 2) {
+      // Sort by rank
+      eligible.sort((a, b) => {
+        const ra = leadSuit === 'TRUMP' ? tr(a.cards[0]) : sr(a.cards[0]);
+        const rb = leadSuit === 'TRUMP' ? tr(b.cards[0]) : sr(b.cards[0]);
+        return ra - rb;
+      });
+      // Check for consecutive run with top rank > maxLedRank
+      const order = leadSuit === 'TRUMP' ? getTrumpOrder(trumpSuit, trumpNumber) : null;
+      for (let i = 1; i < eligible.length; i++) {
+        const rPrev = leadSuit === 'TRUMP' ? order.indexOf(eligible[i-1].key) : sr(eligible[i-1].cards[0]);
+        const rCurr = leadSuit === 'TRUMP' ? order.indexOf(eligible[i].key) : sr(eligible[i].cards[0]);
+        const topR  = leadSuit === 'TRUMP' ? tr(eligible[i].cards[0]) : sr(eligible[i].cards[0]);
+        if (rCurr === rPrev + 1 && topR > maxLedRank) return true;
       }
-      return false;
     }
-
-    // Sort eligible keys by rank
-    const order = suit === 'TRUMP' ? getTrumpOrder(trumpSuit, trumpNumber) : null;
-    const getRankIdx = (k) => {
-      if (order) return order.indexOf(k);
-      // For non-trump: key format is "SUIT_RANK", get rank part
-      const parts = k.split('_');
-      return RANKS.indexOf(parts[parts.length - 1]);
-    };
-    eligibleKeys.sort((a, b) => getRankIdx(a) - getRankIdx(b));
-
-    // Look for consecutive pairs/triples that form a higher tractor
-    for (let i = 1; i < eligibleKeys.length; i++) {
-      const prevIdx = getRankIdx(eligibleKeys[i - 1]);
-      const currIdx = getRankIdx(eligibleKeys[i]);
-      if (currIdx === prevIdx + 1 && currIdx > maxLedRank) return true;
-    }
-
     // Trump tractor beats non-trump tractor
-    if (suit !== 'TRUMP') {
-      return hasTractor(getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber), groupSize, 'TRUMP', trumpSuit, trumpNumber);
-    }
+    if (leadSuit !== 'TRUMP' && hasTractor(handTrump, groupSize, 'TRUMP', trumpSuit, trumpNumber)) return true;
     return false;
   }
 
@@ -801,12 +793,16 @@ function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
 export function findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpNumber) {
   const components = decomposeCombo(playedCards, trumpSuit, trumpNumber);
   // Clockwise order: next seat, across, then prev seat
-  // All 3 other players (including teammate) can be forced to challenge
   const order = [(leaderSeat + 1) % 4, (leaderSeat + 2) % 4, (leaderSeat + 3) % 4];
   for (const seat of order) {
     const hand = hands[seat] || [];
-    if (components.some(comp => canBeatComponent(hand, comp, trumpSuit, trumpNumber))) {
-      return { challengerSeat: seat, components };
+    for (const comp of components) {
+      const canBeat = canBeatComponent(hand, comp, trumpSuit, trumpNumber);
+      console.log(`[Challenge check] seat ${seat} vs ${comp.type}(${comp.cards.map(c=>c.rank+c.suit).join(',')}): canBeat=${canBeat}, handSize=${hand.length}`);
+      if (canBeat) {
+        console.log(`[Challenge] seat ${seat} MUST challenge`);
+        return { challengerSeat: seat, components };
+      }
     }
   }
   return null;
