@@ -132,7 +132,7 @@ function PlayingCard({ card, selected, onClick, small }) {
   const w = small ? 40 : 64;
   const h = small ? 56 : 92;
   const fs = small ? 9 : 13;
-  const marginLeft = selected ? (small ? -10 : -14) : (small ? -14 : -22);
+  const marginLeft = selected ? (small ? -10 : -14) : (small ? -12 : -20);
 
   const PIP_LAYOUTS = {
     'A':  [[0.5,0.5,false]],
@@ -159,7 +159,7 @@ function PlayingCard({ card, selected, onClick, small }) {
     boxShadow: selected ? `0 -12px 24px ${GOLD}66,0 4px 10px rgba(0,0,0,0.35)` : '0 2px 6px rgba(0,0,0,0.28)',
     transform: selected ? 'translateY(-18px)' : 'none', transition: 'all 0.12s ease',
     position: 'relative', marginLeft: `${marginLeft}px`,
-    flexShrink: 0, overflow: 'hidden', userSelect: 'none', zIndex: selected ? 10 : 'auto',
+    flexShrink: 0, overflow: 'visible', userSelect: 'none', zIndex: selected ? 10 : 'auto',
   };
 
   const Corner = ({ flip }) => (
@@ -616,51 +616,78 @@ export default function App() {
     const existingDecl = game.trumpDeclaration;
     const newSuit = getTrumpSuitFromDeclaration(selectedCards);
     const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
+    const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
+    const iAmDeclarer = existingDecl?.playerIdx === mySeat;
 
-    // REINFORCEMENT: same player adds more same-suit trump numbers
-    const isReinforcement = existingDecl &&
-      existingDecl.playerIdx === mySeat &&
-      !allJokers &&
-      !existingDecl.locked &&
-      newSuit === game.trumpSuit &&
-      selectedCards.every(c => c.rank === game.trumpNumber && c.suit === newSuit);
+    // Validate cards: must be all trump number of same suit, or all same joker type
+    if (!allJokers) {
+      if (!selectedCards.every(c => c.rank === game.trumpNumber)) {
+        return setError(`Must select ${game.trumpNumber}s (trump number) or 2+ jokers`);
+      }
+      if (!selectedCards.every(c => c.suit === selectedCards[0].suit)) {
+        return setError('All selected cards must be the same suit');
+      }
+    } else {
+      const allBig = selectedCards.every(c => c.rank === 'BIG');
+      const allSmall = selectedCards.every(c => c.rank === 'SMALL');
+      if (!allBig && !allSmall) return setError('Joker declaration must be all Big or all Small jokers');
+      if (selectedCards.length < 2) return setError('Need at least 2 jokers to declare');
+    }
 
-    if (isReinforcement) {
-      const newCount = (existingDecl.declarationCount || existingDecl.cards.length) + selectedCards.length;
-      const isLocked = newCount >= 3;
-      const logMsg = isLocked
-        ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${game.trumpNumber}s — locked!)`
-        : `${declName} reinforces ${newSuit} trump (${newCount} cards now — needs ${newCount + 1} to override).`;
+    // ── CASE 1: No existing declaration — fresh call (1+ cards ok) ──────────
+    if (!existingDecl) {
+      const isLocked = !allJokers && selectedCards.length >= 3;
       await updateRoom(room.id, { game: {
         ...game,
-        trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
-        log: [...(game.log || []), logMsg],
+        trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
+        trumpSuit: newSuit,
+        log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
       }});
       setSelectedIds([]);
       return;
     }
 
-    // Fresh declaration or override
-    // If I was overridden (I'm not the current declarer) and picking a DIFFERENT suit,
-    // treat as a fresh declaration — I just need valid cards, not to beat the count
-    const wasOverridden = existingDecl && existingDecl.playerIdx !== mySeat;
-    const declaringDifferentSuit = newSuit !== game.trumpSuit;
-    const declCheckDecl = (wasOverridden && declaringDifferentSuit) ? null : existingDecl;
-    if (!canDeclareTrump(selectedCards, declCheckDecl, game.trumpNumber)) {
-      return setError(`Select trump number cards (${game.trumpNumber}) or 2+ jokers to declare`);
+    // ── CASE 2: Locked — nobody can do anything ──────────────────────────────
+    if (existingDecl.locked) return setError('Trump is locked — cannot be changed');
+
+    // ── CASE 3: I am the declarer — REINFORCEMENT only (same suit, more cards) ─
+    if (iAmDeclarer) {
+      // Same player can only reinforce same suit — cannot switch suits
+      if (newSuit !== game.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
+      if (allJokers) return setError('You already declared a suit — cannot switch to jokers');
+      const newCount = currentCount + selectedCards.length;
+      if (newCount < currentCount + 1) return setError('Must add at least 1 more card to reinforce');
+      const isLocked = newCount >= 3;
+      await updateRoom(room.id, { game: {
+        ...game,
+        trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
+        log: [...(game.log || []), isLocked
+          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${game.trumpNumber}s — locked!)`
+          : `${declName} reinforces ${newSuit} trump (${newCount} cards — needs ${newCount + 1} to override).`],
+      }});
+      setSelectedIds([]);
+      return;
+    }
+
+    // ── CASE 4: Opponent override — must strictly beat current count ─────────
+    if (selectedCards.length <= currentCount) {
+      return setError(`Need more than ${currentCount} card${currentCount>1?'s':''} to override current declaration`);
     }
     const isLocked = !allJokers && selectedCards.length >= 3;
-    const logMsg = isLocked
-      ? `${declName} locks in ${newSuit} as trump with 3 ${game.trumpNumber}s!`
-      : `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'}.`;
+    // Reset confirmed passes so overridden player gets their pass button back
+    const resetConfirmed = (game.trumpConfirmed || []).filter(s => s === mySeat);
     await updateRoom(room.id, { game: {
       ...game,
       trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
       trumpSuit: newSuit,
-      log: [...(game.log || []), logMsg],
+      trumpConfirmed: resetConfirmed,
+      log: [...(game.log || []), isLocked
+        ? `${declName} overrides and locks in ${newSuit} as trump with ${selectedCards.length} ${game.trumpNumber}s!`
+        : `${declName} overrides trump${newSuit ? ` → ${newSuit}` : ' → jokers'} with ${selectedCards.length} cards.`],
     }});
     setSelectedIds([]);
   };
+
 
   const handleConfirmPass = async () => {
     if (!game) return;
@@ -993,66 +1020,97 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       {/* Phase-specific actions */}
       {game.phase === 'dealing' && (
         <div style={{ background: SURFACE, border: `1px solid ${GOLD}44`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-          <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>
-            {game.dealComplete ? 'Dealing Complete — Declare Trump' : `Dealing Cards... (${game.dealIndex || 0}/${game.dealSequence?.length || 156})`}
-          </div>
 
-          {/* Progress bar */}
-          {!game.dealComplete && (
+          {/* Progress bar while dealing */}
+          {!game.dealComplete && (<>
+            <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>
+              Dealing Cards... ({game.dealIndex || 0}/{game.dealSequence?.length || 156})
+            </div>
             <div style={{ height: '4px', background: BORDER, borderRadius: '2px', marginBottom: '12px', overflow: 'hidden' }}>
               <div style={{ height: '100%', background: GOLD, borderRadius: '2px', width: `${((game.dealIndex || 0) / (game.dealSequence?.length || 156)) * 100}%`, transition: 'width 0.8s ease' }} />
             </div>
+          </>)}
+
+          {/* Declaration status */}
+          {game.trumpDeclaration ? (
+            <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
+              <span style={{ color: GOLD, fontWeight: 700 }}>
+                {room.players.find(p => p.seat === game.trumpDeclaration.playerIdx)?.name}
+              </span> declared trump{game.trumpSuit ? ` (${game.trumpSuit})` : ' (jokers)'} with {game.trumpDeclaration.declarationCount} card{game.trumpDeclaration.declarationCount > 1 ? 's' : ''}.
+              {!game.trumpDeclaration.locked && ' Can be overridden with more cards.'}
+              {game.trumpDeclaration.locked && <span style={{ color: GREEN }}> 🔒 Locked.</span>}
+            </div>
+          ) : (
+            <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
+              {game.dealComplete ? 'Dealing complete. Declare trump or pass.' : 'You can declare trump any time during dealing.'}
+            </div>
           )}
 
-          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
-            {game.trumpDeclaration
-              ? `${room.players.find(p => p.seat === game.trumpDeclaration.playerIdx)?.name} declared trump${game.trumpSuit ? ` (${game.trumpSuit})` : ' (no suit — jokers)'}. Someone can override with more cards.`
-              : 'Select 2+ cards of the same rank to declare trump. You can declare any time during dealing.'}
-          </div>
-
+          {/* Declare button — always available during dealing */}
           <button style={S.btn(selectedCards.length >= 1 ? GOLD : '#333')} onClick={onDeclareTrump}>
             Declare Trump ({selectedCards.length} selected)
           </button>
 
-          {/* Pass button — always visible during dealing if no trump declared */}
-          {!game.trumpSuit && (() => {
+          {/* Pass button — only shown after dealing is complete, to players who haven't passed */}
+          {game.dealComplete && (() => {
             const confirmed = game.trumpConfirmed || [];
-            const iConfirmed = confirmed.includes(mySeat);
-            const waitingFor = [0,1,2,3].filter(s => !confirmed.includes(s)).map(s => room.players.find(p => p.seat === s)?.name).filter(Boolean);
+            const decl = game.trumpDeclaration;
+            // Who needs to pass:
+            // - if no declaration: everyone
+            // - if declaration: everyone EXCEPT the current declarer (they already called)
+            //   BUT if someone was overridden, they get a pass button back
+            const declarerSeat = decl?.playerIdx ?? -1;
+            const needsToPass = (seat) => {
+              if (confirmed.includes(seat)) return false; // already passed
+              if (seat === declarerSeat) return false;    // current declarer doesn't need to pass
+              return true;
+            };
+            const iNeedToPass = needsToPass(mySeat);
+            const waitingOn = [0,1,2,3].filter(s => needsToPass(s))
+              .map(s => room.players.find(p => p.seat === s)?.name).filter(Boolean);
+            const allPassed = waitingOn.length === 0;
+
             return (
-              <div style={{ marginTop: '12px', padding: '12px', background: '#1a1200', border: `1px solid ${GOLD}44`, borderRadius: '8px' }}>
-                <div style={{ color: GOLD, fontWeight: 700, fontSize: '13px', marginBottom: '8px' }}>
-                  ⚠ Dealing complete — no trump declared yet
-                </div>
-                <div style={{ color: MUTED, fontSize: '12px', marginBottom: '10px' }}>
-                  If nobody declares, trump will be decided from the kitty. Confirm you're passing.
-                </div>
-                {!iConfirmed ? (
-                  <button style={S.btn(RED)} onClick={onConfirmPass}>
-                    I pass — decide trump from kitty
+              <div style={{ marginTop: '10px' }}>
+                {iNeedToPass && (
+                  <button style={{ ...S.btn(MUTED), marginBottom: '6px' }} onClick={onConfirmPass}>
+                    Pass — I won't call trump
                   </button>
-                ) : (
-                  <div style={{ color: GREEN, fontSize: '12px' }}>
-                    ✓ You passed. Waiting for: {waitingFor.join(', ') || 'everyone confirmed!'}
+                )}
+                {!iNeedToPass && !allPassed && mySeat !== declarerSeat && (
+                  <div style={{ color: GREEN, fontSize: '12px', marginBottom: '4px' }}>✓ You passed.</div>
+                )}
+                {!allPassed && (
+                  <div style={{ fontSize: '11px', color: MUTED }}>
+                    Waiting for: {waitingOn.join(', ')}
                   </div>
                 )}
-                <div style={{ fontSize: '11px', color: MUTED, marginTop: '6px' }}>
-                  Confirmed: {confirmed.length}/4
-                </div>
+                {allPassed && game.trumpSuit && (
+                  <div style={{ fontSize: '12px', color: GREEN }}>
+                    ✓ All passed — kitty ready
+                  </div>
+                )}
               </div>
             );
           })()}
 
-          {isKittyHolder && game.dealComplete && (
-            <button style={{ ...S.btn(GREEN), marginTop: '8px' }} onClick={onTakeKitty}>
-              Take Kitty →
-            </button>
-          )}
-          {!isKittyHolder && game.dealComplete && (
-            <div style={{ color: MUTED, fontSize: '12px', textAlign: 'center', marginTop: '8px' }}>
-              Waiting for {room.players.find(p => p.seat === game.kittyHolder)?.name} to take the kitty...
-            </div>
-          )}
+          {/* Take kitty — only after all passed AND trump is set */}
+          {game.dealComplete && game.trumpSuit && (() => {
+            const confirmed = game.trumpConfirmed || [];
+            const decl = game.trumpDeclaration;
+            const declarerSeat = decl?.playerIdx ?? -1;
+            const allPassed = [0,1,2,3].every(s => s === declarerSeat || confirmed.includes(s));
+            if (!allPassed) return null;
+            return isKittyHolder ? (
+              <button style={{ ...S.btn(GREEN), marginTop: '8px' }} onClick={onTakeKitty}>
+                Take Kitty →
+              </button>
+            ) : (
+              <div style={{ color: MUTED, fontSize: '12px', textAlign: 'center', marginTop: '8px' }}>
+                Waiting for {room.players.find(p => p.seat === game.kittyHolder)?.name} to take the kitty...
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1185,7 +1243,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       {error && <div style={{ ...S.error, marginBottom: '12px' }}>{error}<span style={{ float: 'right', cursor: 'pointer' }} onClick={() => setError('')}>✕</span></div>}
 
       {/* My Hand */}
-      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px' }}>
+      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px', overflow: 'visible' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <span style={S.label}>Your Hand ({sortedHand.length} cards)</span>
           <span style={S.badge(myTeam === 0 ? GOLD : '#52a8a8')}>Team {myTeam === 0 ? 'A' : 'B'} {myTeamAttacking ? '⚔' : '🛡'}</span>
@@ -1204,7 +1262,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           return groups.map(({ label, cards, color }) => (
             <div key={label} style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '4px 4px 8px 4px', gap: '0px', WebkitOverflowScrolling: 'touch' }}>
+              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '24px 8px 8px 8px', gap: '0px', WebkitOverflowScrolling: 'touch', overflowY: 'visible' }}>
                 {cards.map(card => (
                   <PlayingCard key={card.id} card={card}
                     selected={selectedIds.includes(card.id)}
