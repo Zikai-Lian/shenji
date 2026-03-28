@@ -1274,20 +1274,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
                   );
                 })}
               </div>
-            </div>dCompIdx === i ? '#2a2500' : SURFACE,
-                      cursor: isChallenger ? 'pointer' : 'default',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
-                    }}
-                  >
-                    <div style={{ fontSize: '10px', color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {comp.type.replace('_', ' ')}
-                    </div>
-                    <div style={{ display: 'flex', gap: '2px' }}>
-                      {comp.cards.map(c => <PlayingCard key={c.id} card={c} small />)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            
             </div>
 
             {isChallenger && (
