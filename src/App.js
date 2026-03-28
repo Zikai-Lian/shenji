@@ -19,7 +19,7 @@ const TEXT = '#e6edf3';
 const MUTED = '#7d8590';
 
 const S = {
-  app: { minHeight: '100vh', background: BG, color: TEXT, fontFamily: "'Noto Serif SC', 'Georgia', serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px' },
+  app: { minHeight: '100vh', background: BG, color: TEXT, fontFamily: "'Noto Serif SC', 'Georgia', serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px 0' },
   title: { fontSize: 'clamp(28px, 6vw, 52px)', fontWeight: 700, color: GOLD, letterSpacing: '0.15em', textAlign: 'center', marginBottom: '8px', textShadow: `0 0 40px ${GOLD}44` },
   subtitle: { color: MUTED, fontSize: '13px', letterSpacing: '0.2em', textAlign: 'center', marginBottom: '40px', textTransform: 'uppercase' },
   card: { background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '12px', padding: '32px', width: '100%', maxWidth: '440px' },
@@ -374,7 +374,7 @@ export default function App() {
   // Game state (from room.game)
   const game = room?.game;
   const mySeat = room?.players?.find(p => p.id === playerId)?.seat ?? -1;
-  const myHand = game?.hands?.[mySeat] ?? [];
+  const myHand = (mySeat >= 0 && game?.hands?.[mySeat]) ? game.hands[mySeat] : [];
   const myTeam = mySeat % 2; // 0 = team A (seats 0,2), 1 = team B (seats 1,3)
 
   // ── Supabase subscription ────────────────────────────────────────────────
@@ -963,7 +963,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
   const myTeamAttacking = myTeam === game.attackingTeam;
 
   return (
-    <div style={{ width: '100%', maxWidth: '640px' }}>
+    <div style={{ width: '100%', maxWidth: '640px', padding: '0 16px', boxSizing: 'border-box' }}>
 
       {/* Scores & Info */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
@@ -1060,50 +1060,57 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
             Declare Trump ({selectedCards.length} selected)
           </button>
 
-          {/* Pass button — only shown after dealing is complete, to players who haven't passed */}
-          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && (() => {
+          {/* Pass button — shown after all cards dealt, when nobody has declared */}
+          {(game.dealComplete || (game.dealIndex >= (game.dealSequence?.length || 156))) && !game.trumpDeclaration && (() => {
             const confirmed = game.trumpConfirmed || [];
-            const decl = game.trumpDeclaration;
-            // Who needs to pass:
-            // - if no declaration: everyone
-            // - if declaration: everyone EXCEPT the current declarer (they already called)
-            //   BUT if someone was overridden, they get a pass button back
-            const declarerSeat = decl?.playerIdx ?? -1;
-            const needsToPass = (seat) => {
-              if (confirmed.includes(seat)) return false; // already passed
-              if (seat === declarerSeat) return false;    // current declarer doesn't need to pass
-              return true;
-            };
-            const iNeedToPass = needsToPass(mySeat);
-            const waitingOn = [0,1,2,3].filter(s => needsToPass(s))
+            const iConfirmed = confirmed.includes(mySeat);
+            const waitingOn = [0,1,2,3]
+              .filter(s => !confirmed.includes(s))
               .map(s => room.players.find(p => p.seat === s)?.name).filter(Boolean);
-            const allPassed = waitingOn.length === 0;
-
             return (
               <div style={{ marginTop: '10px' }}>
-                {iNeedToPass && (
+                {!iConfirmed ? (
                   <button style={{ ...S.btn(MUTED), marginBottom: '6px' }} onClick={onConfirmPass}>
-                    Pass — I won't call trump
+                    Pass — decide trump from kitty
                   </button>
-                )}
-                {!iNeedToPass && !allPassed && mySeat !== declarerSeat && (
+                ) : (
                   <div style={{ color: GREEN, fontSize: '12px', marginBottom: '4px' }}>✓ You passed.</div>
                 )}
-                {!allPassed && (
-                  <div style={{ fontSize: '11px', color: MUTED }}>
-                    Waiting for: {waitingOn.join(', ')}
-                  </div>
-                )}
-                {allPassed && game.trumpSuit && (
-                  <div style={{ fontSize: '12px', color: GREEN }}>
-                    ✓ All passed — kitty ready
-                  </div>
+                {waitingOn.length > 0 && (
+                  <div style={{ fontSize: '11px', color: MUTED }}>Waiting for: {waitingOn.join(', ')}</div>
                 )}
               </div>
             );
           })()}
 
-          {/* Take kitty — only after all passed AND trump is set */}
+
+          {/* Pass block for when someone has declared — non-declarers must pass */}
+          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpDeclaration && (() => {
+            const confirmed = game.trumpConfirmed || [];
+            const declarerSeat = game.trumpDeclaration.playerIdx;
+            const iNeedToPass = mySeat !== declarerSeat && !confirmed.includes(mySeat);
+            const waitingOn = [0,1,2,3]
+              .filter(s => s !== declarerSeat && !confirmed.includes(s))
+              .map(s => room.players.find(p => p.seat === s)?.name).filter(Boolean);
+            const allPassed = waitingOn.length === 0;
+            if (allPassed) return null;
+            return (
+              <div style={{ marginTop: '10px' }}>
+                {iNeedToPass && (
+                  <button style={{ ...S.btn(MUTED), marginBottom: '6px' }} onClick={onConfirmPass}>
+                    Pass — I accept this trump call
+                  </button>
+                )}
+                {!iNeedToPass && mySeat !== declarerSeat && (
+                  <div style={{ color: GREEN, fontSize: '12px', marginBottom: '4px' }}>✓ You accepted.</div>
+                )}
+                <div style={{ fontSize: '11px', color: MUTED }}>
+                  Waiting for: {waitingOn.join(', ')}
+                </div>
+              </div>
+            );
+          })()}
+
           {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpSuit && (() => {
             const confirmed = game.trumpConfirmed || [];
             const decl = game.trumpDeclaration;
@@ -1252,7 +1259,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       {error && <div style={{ ...S.error, marginBottom: '12px' }}>{error}<span style={{ float: 'right', cursor: 'pointer' }} onClick={() => setError('')}>✕</span></div>}
 
       {/* My Hand */}
-      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px', overflow: 'visible' }}>
+      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '8px 0', overflow: 'visible' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <span style={S.label}>Your Hand ({sortedHand.length} cards)</span>
           <span style={S.badge(myTeam === 0 ? GOLD : '#52a8a8')}>Team {myTeam === 0 ? 'A' : 'B'} {myTeamAttacking ? '⚔' : '🛡'}</span>
@@ -1269,9 +1276,9 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           });
           if (trumpCards.length) groups.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
           return groups.map(({ label, cards, color }) => (
-            <div key={label} style={{ marginBottom: '6px' }}>
+            <div key={label} style={{ marginBottom: '6px', margin: '0 -16px 6px -16px' }}>
               <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '24px 12px 8px 12px', gap: '4px', WebkitOverflowScrolling: 'touch', overflowY: 'visible' }}>
+              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '28px 20px 8px 20px', gap: '4px', WebkitOverflowScrolling: 'touch', overflowY: 'visible' }}>
                 {cards.map(card => (
                   <PlayingCard key={card.id} card={card}
                     selected={selectedIds.includes(card.id)}
