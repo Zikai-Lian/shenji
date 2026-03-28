@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase, createRoom, joinRoom, updateRoom, subscribeToRoom } from './supabase';
+import { supabase, createRoom, joinRoom, updateRoom as updateRoomRemote, subscribeToRoom } from './supabase';
 import {
   buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
   detectCombo, trickWinner, countPoints, cardPoints,
@@ -337,6 +337,21 @@ export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [room, setRoom] = useState(null);
+
+  // Wrapper: write to Supabase AND update local state immediately
+  // (Supabase realtime doesn't echo your own writes back)
+  const updateRoom = async (roomId, updates) => {
+    await updateRoomRemote(roomId, updates);
+    if (updates.game !== undefined) {
+      setRoom(r => r ? { ...r, game: updates.game } : r);
+    }
+    if (updates.players !== undefined) {
+      setRoom(r => r ? { ...r, players: updates.players } : r);
+    }
+    if (updates.state !== undefined) {
+      setRoom(r => r ? { ...r, state: updates.state } : r);
+    }
+  };
   const [playerId, setPlayerId] = useState(null);
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState('');
