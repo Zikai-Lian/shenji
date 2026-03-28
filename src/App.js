@@ -337,6 +337,7 @@ export default function App() {
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [room, setRoom] = useState(null);
+  const [game, setGame] = useState(null);
 
   // Wrapper: write to Supabase AND update local state immediately
   // (Supabase realtime doesn't echo your own writes back)
@@ -348,9 +349,11 @@ export default function App() {
 
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
-    // Re-fetch to get exact server state (guarantees new object reference = re-render)
-    const { data } = await supabase.from('rooms').select('*').eq('id', roomId).single();
-    if (data) setRoom({ ...data });
+    // Update local state immediately — no refetch needed
+    if (updates.game !== undefined) setGame({ ...updates.game });
+    if (updates.players !== undefined || updates.state !== undefined || updates.host_id !== undefined) {
+      setRoom(r => r ? { ...r, ...updates } : r);
+    }
   };
   const [playerId, setPlayerId] = useState(null);
   const [restoring, setRestoring] = useState(true);
@@ -369,6 +372,7 @@ export default function App() {
           .then(({ data, error }) => {
             if (!error && data && data.players.find(p => p.id === pid)) {
               setRoom(data);
+              setGame(data.game);
               setPlayerId(pid);
               setScreen(data.state === 'game' ? 'game' : 'lobby');
             } else {
@@ -387,7 +391,6 @@ export default function App() {
   }, []);
 
   // Game state (from room.game)
-  const game = room?.game;
   const mySeat = room?.players?.find(p => p.id === playerId)?.seat ?? -1;
   const myHand = (mySeat >= 0 && game?.hands?.[mySeat]) ? game.hands[mySeat] : [];
   const myTeam = mySeat % 2; // 0 = team A (seats 0,2), 1 = team B (seats 1,3)
@@ -398,6 +401,7 @@ export default function App() {
     if (subRef.current) subRef.current.unsubscribe();
     subRef.current = subscribeToRoom(room.id, (updated) => {
       setRoom(updated);
+      if (updated.game !== undefined) setGame(updated.game);
       if (updated.state === 'game' && updated.game) setScreen('game');
     });
     return () => { if (subRef.current) subRef.current.unsubscribe(); };
@@ -409,7 +413,7 @@ export default function App() {
     setLoading(true); setError('');
     try {
       const { room: r, playerId: pid } = await createRoom(playerName.trim());
-      setRoom(r); setPlayerId(pid); setScreen('lobby');
+      setRoom(r); setGame(r.game); setPlayerId(pid); setScreen('lobby');
       localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -421,7 +425,7 @@ export default function App() {
     setLoading(true); setError('');
     try {
       const { room: r, playerId: pid } = await joinRoom(joinCode, playerName.trim());
-      setRoom(r); setPlayerId(pid); setScreen('lobby');
+      setRoom(r); setGame(r.game); setPlayerId(pid); setScreen('lobby');
       localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -465,6 +469,8 @@ export default function App() {
       roundNum: 1,
     };
     await updateRoom(room.id, { state: 'game', game: initialGame });
+      setGame(initialGame);
+      setRoom(r => r ? { ...r, state: 'game', game: initialGame } : r);
   };
 
   // ── Game Actions ─────────────────────────────────────────────────────────
@@ -532,8 +538,6 @@ export default function App() {
         const kittyHolder = g.firstCardSeat ?? 0;
         await updateRoomRemote(room.id, { game: { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
           log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}.`] } });
-        const { data: d } = await supabase.from('rooms').select('*').eq('id', room.id).single();
-        if (d) setRoom({ ...d });
         return;
       }
 
@@ -543,9 +547,9 @@ export default function App() {
           const kittyHolder = g.roundNum === 1
             ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
             : (g.firstCardSeat ?? 0);
-          await updateRoomRemote(room.id, { game: { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
-          const { data: d } = await supabase.from('rooms').select('*').eq('id', room.id).single();
-          if (d) setRoom({ ...d });
+          const finalGame = { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true };
+          await updateRoomRemote(room.id, { game: finalGame });
+          setGame({ ...finalGame });
         }
         // else wait for passes — UI handles it
         return;
@@ -557,10 +561,12 @@ export default function App() {
       const seq = g.dealSequence;
       const { seat, card } = seq[g.dealIndex];
       const newHands = g.hands.map((h, i) => i === seat ? [...h, card] : h);
-      await updateRoomRemote(room.id, { game: { ...g, hands: newHands, dealIndex: g.dealIndex + 1,
+      const dealtGame = { ...g, hands: newHands, dealIndex: g.dealIndex + 1,
         firstCardSeat: g.dealIndex === 0 ? seat : g.firstCardSeat,
         firstCardSuit: g.dealIndex === 0 ? card.suit : g.firstCardSuit,
-      }});
+      };
+      await updateRoomRemote(room.id, { game: dealtGame });
+      setGame({ ...dealtGame });
     }, 250);
 
     return () => clearTimeout(dealTimerRef.current);
