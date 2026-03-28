@@ -342,12 +342,17 @@ export default function App() {
   // (Supabase realtime doesn't echo your own writes back)
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
-    // Re-fetch from Supabase so our local state matches exactly what was written
-    const { data } = await supabase.from('rooms').select('*').eq('id', roomId).single();
-    if (data) {
-      console.log('[updateRoom] refetch OK, trumpSuit:', data.game?.trumpSuit, 'phase:', data.game?.phase);
-      setRoom(data);
-    }
+    // Update local state immediately so the writer sees their own changes
+    // Use functional update to merge cleanly without triggering extra renders
+    setRoom(r => {
+      if (!r) return r;
+      const next = { ...r };
+      if (updates.game !== undefined) next.game = { ...updates.game };
+      if (updates.players !== undefined) next.players = [...updates.players];
+      if (updates.state !== undefined) next.state = updates.state;
+      if (updates.host_id !== undefined) next.host_id = updates.host_id;
+      return next;
+    });
   };
   const [playerId, setPlayerId] = useState(null);
   const [restoring, setRestoring] = useState(true);
@@ -554,14 +559,17 @@ export default function App() {
         return;
       }
 
-      // Deal next card
-      const seq = g.dealSequence;
-      const idx = g.dealIndex;
+      // Deal next card — re-fetch one more time right before writing to minimize race
+      const { data: preWriteRoom } = await supabase.from('rooms').select('game').eq('id', room.id).single();
+      const pg = preWriteRoom?.game;
+      if (!pg || pg.dealComplete || pg.dealIndex !== g.dealIndex) return; // someone else already wrote
+      const seq = pg.dealSequence;
+      const idx = pg.dealIndex;
       const { seat, card } = seq[idx];
-      const newHands = g.hands.map((h, i) => i === seat ? [...h, card] : h);
-      await updateRoom(room.id, { game: { ...g, hands: newHands, dealIndex: idx + 1,
-        firstCardSeat: idx === 0 ? seat : g.firstCardSeat,
-        firstCardSuit: idx === 0 ? card.suit : g.firstCardSuit,
+      const newHands = pg.hands.map((h, i) => i === seat ? [...h, card] : h);
+      await updateRoomRemote(room.id, { game: { ...pg, hands: newHands, dealIndex: idx + 1,
+        firstCardSeat: idx === 0 ? seat : pg.firstCardSeat,
+        firstCardSuit: idx === 0 ? card.suit : pg.firstCardSuit,
       }});
     }, 250);
 
