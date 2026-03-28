@@ -128,7 +128,7 @@ function PlayingCard({ card, selected, onClick, small }) {
   const isJoker = card.suit === 'JOKER';
   const rank = isJoker ? (card.rank === 'BIG' ? 'BIG' : 'SML') : card.rank;
   const suit = card.suit;
-  const color = isRed ? '#cc2200' : '#1a1a1a';
+  const color = isRed ? '#cc2200' : '#111111';
   const w = small ? 40 : 64;
   const h = small ? 56 : 92;
   const fs = small ? 9 : 13;
@@ -1370,7 +1370,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           const suits = ['\u2660','\u2665','\u2666','\u2663'].filter(s => s !== game.trumpSuit);
           suits.forEach(suit => {
             const cards = nonTrump.filter(c => c.suit === suit);
-            if (cards.length) groups.push({ label: suit, cards, color: (suit==='\u2665'||suit==='\u2666') ? '#cc2200' : '#1a1a1a' });
+            if (cards.length) groups.push({ label: suit, cards, color: (suit==='\u2665'||suit==='\u2666') ? '#cc2200' : '#aaaaaa' });
           });
           if (trumpCards.length) groups.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
           return groups.map(({ label, cards, color }) => (
@@ -1414,7 +1414,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
                             const isRed = card.suit === '\u2665' || card.suit === '\u2666';
                             const isJoker = card.suit === 'JOKER';
                             return (
-                              <span key={card.id} style={{ color: isJoker ? GOLD : isRed ? '#cc2200' : TEXT, marginRight: '3px', fontWeight: 600 }}>
+                              <span key={card.id} style={{ color: isJoker ? GOLD : isRed ? '#e05252' : '#cccccc', marginRight: '3px', fontWeight: 600 }}>
                                 {isJoker ? (card.rank === 'BIG' ? 'BJ' : 'SJ') : `${card.rank}${card.suit}`}
                               </span>
                             );
