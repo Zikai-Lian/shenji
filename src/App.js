@@ -490,31 +490,35 @@ export default function App() {
   useEffect(() => {
     if (!game || game.phase !== 'trick_end' || mySeat !== 0) return;
     const timer = setTimeout(async () => {
-      const winner = game.trickEndWinner;
-      const log = game.trickEndLog || game.log;
-      const newHands = game.hands;
-      const newTricks = game.tricks || [];
-      const newScores = game.scores;
+      // Fetch fresh state to avoid stale closure
+      const { data: tr } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+      const g = tr?.game;
+      if (!g || g.phase !== 'trick_end') return;
+      const winner = g.trickEndWinner;
+      const log = g.trickEndLog || g.log;
+      const newHands = g.hands;
+      const newTricks = g.tricks || [];
+      const newScores = g.scores;
       const totalCards = newHands.reduce((s, h) => s + h.length, 0);
 
       if (totalCards === 0) {
-        const kittyPts = countPoints(game.kitty || []);
+        const kittyPts = countPoints(g.kitty || []);
         const lastWinnerTeam = winner % 2;
         const mult = kittyMultiplier(
           (newTricks[newTricks.length - 1]?.plays || []).flatMap(p => p.cards),
-          game.trumpSuit, game.trumpNumber
+          g.trumpSuit, g.trumpNumber
         );
         const finalScores = [...newScores];
         finalScores[lastWinnerTeam] += kittyPts * mult;
-        const defScore = finalScores[1 - game.attackingTeam];
+        const defScore = finalScores[1 - g.attackingTeam];
         const atkGain = attackerLevelGain(defScore);
         const defGain = defenderLevelGain(defScore);
-        await updateRoom(room.id, { game: { ...gameRef.current, currentTrick: [], scores: finalScores,
+        await updateRoom(room.id, { game: { ...g, currentTrick: [], scores: finalScores,
           phase: 'round_end',
           roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
           log: [...log, `Round over! Defenders scored ${defScore} pts.`] } });
       } else {
-        await updateRoom(room.id, { game: { ...gameRef.current, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
+        await updateRoom(room.id, { game: { ...g, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
       }
     }, 2000);
     return () => clearTimeout(timer);
@@ -672,7 +676,7 @@ export default function App() {
           ...freshGame,
           trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
           trumpSuit: newSuit,
-          log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
+          log: [...(freshGame.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
         }});
           } catch(e) {
             setError('Failed to declare: ' + e.message);
@@ -687,7 +691,7 @@ export default function App() {
     // ── CASE 3: I am the declarer — REINFORCEMENT only (same suit, more cards) ─
     if (iAmDeclarer) {
       // Same player can only reinforce same suit — cannot switch suits
-      if (newSuit !== gameRef.current.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
+      if (newSuit !== freshGame.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
       if (allJokers) return setError('You already declared a suit — cannot switch to jokers');
       const newCount = currentCount + selectedCards.length;
       if (newCount < currentCount + 1) return setError('Must add at least 1 more card to reinforce');
@@ -695,7 +699,7 @@ export default function App() {
       await updateRoom(room.id, { game: {
         ...freshGame,
         trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
-        log: [...(game.log || []), isLocked
+        log: [...(freshGame.log || []), isLocked
           ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${freshGame.trumpNumber}s — locked!)`
           : `${declName} reinforces ${newSuit} trump (${newCount} cards — needs ${newCount + 1} to override).`],
       }});
@@ -709,13 +713,13 @@ export default function App() {
     }
     const isLocked = !allJokers && selectedCards.length >= 3;
     // Reset confirmed passes so overridden player gets their pass button back
-    const resetConfirmed = (game.trumpConfirmed || []).filter(s => s === mySeat);
+    const resetConfirmed = (freshGame.trumpConfirmed || []).filter(s => s === mySeat);
     await updateRoom(room.id, { game: {
       ...freshGame,
       trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
       trumpSuit: newSuit,
       trumpConfirmed: resetConfirmed,
-      log: [...(game.log || []), isLocked
+      log: [...(freshGame.log || []), isLocked
         ? `${declName} overrides and locks in ${newSuit} as trump with ${selectedCards.length} ${freshGame.trumpNumber}s!`
         : `${declName} overrides trump${newSuit ? ` → ${newSuit}` : ' → jokers'} with ${selectedCards.length} cards.`],
     }});
@@ -741,27 +745,35 @@ export default function App() {
         ? (freshGame.trumpDeclaration?.playerIdx ?? freshGame.firstCardSeat ?? 0)
         : (freshGame.firstCardSeat ?? 0));
     if (mySeat !== effectiveKittyHolder) return;
-    const newHand = [...myHand, ...freshGame.kitty];
+    const freshHand = freshGame.hands[mySeat] || [];
+    const newHand = [...freshHand, ...(freshGame.kitty || [])];
     const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
     await updateRoom(room.id, { game: { ...freshGame, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
+    setSelectedIds([]);
   };
 
   const handleDiscardKitty = async () => {
     const { freshGame, freshRoom } = await getFreshGame();
     if (!freshGame) return;
     if (mySeat !== freshGame.kittyHolder) return;
-    if (selectedCards.length !== 6) return setError('Select exactly 6 cards to discard');
-    const newHand = myHand.filter(c => !selectedIds.includes(c.id));
+    if (selectedIds.length !== 6) return setError('Select exactly 6 cards to discard');
+    // Build discarded cards from freshGame hand to avoid stale myHand
+    const freshHand = freshGame.hands[mySeat] || [];
+    const discarded = freshHand.filter(c => selectedIds.includes(c.id));
+    if (discarded.length !== 6) return setError('Select exactly 6 cards to discard');
+    const newHand = freshHand.filter(c => !selectedIds.includes(c.id));
     const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
     await updateRoom(room.id, {
-      game: { ...freshGame, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: freshGame.kittyHolder, log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
+      game: { ...freshGame, phase: 'playing', hands: newHands, kitty: discarded, currentTurn: freshGame.kittyHolder, log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
     });
     setSelectedIds([]);
   };
 
   const handlePlayCards = async () => {
-    if (game.currentTurn !== mySeat) return setError("Not your turn");
     if (selectedCards.length === 0) return setError('Select cards to play');
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
+    if (freshGame.currentTurn !== mySeat) return setError('Not your turn');
 
     const combo = detectCombo(selectedCards, freshGame.trumpSuit, freshGame.trumpNumber);
     if (!combo.valid) return setError('Invalid combo');
@@ -839,7 +851,8 @@ export default function App() {
   const commitPlay = async (cards, isLeading) => {
     const { freshGame, freshRoom } = await getFreshGame();
     if (!freshGame) return;
-    const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
+    const freshHand = freshGame.hands[mySeat] || [];
+    const newHand = freshHand.filter(c => !cards.map(c=>c.id).includes(c.id));
     const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
     const newTrick = [...(freshGame.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
 
@@ -1178,7 +1191,15 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       {game.phase === 'kitty' && isKittyHolder && (
         <div style={{ background: SURFACE, border: `1px solid ${GOLD}44`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
           <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>Discard Kitty</div>
-          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>Select exactly 6 cards to discard (they score for whoever wins the last trick)</div>
+          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>Select exactly 6 cards to discard — they score for whoever wins the last trick.</div>
+          {selectedCards.length > 0 && (
+            <div style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: '11px', color: MUTED, marginBottom: '6px' }}>Selected to discard ({selectedCards.length}/6):</div>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {selectedCards.map(card => <PlayingCard key={card.id} card={card} small />)}
+              </div>
+            </div>
+          )}
           <button style={S.btn(selectedCards.length === 6 ? RED : '#444')} onClick={onDiscardKitty}>
             Discard {selectedCards.length}/6 cards
           </button>
@@ -1260,6 +1281,16 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           </div>
         );
       })()}
+
+
+      {phase === 'playing' && isKittyHolder && game.kitty && game.kitty.length > 0 && (
+        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
+          <div style={{ fontSize: '11px', color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>Your discarded kitty</div>
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+            {game.kitty.map(card => <PlayingCard key={card.id} card={card} small />)}
+          </div>
+        </div>
+      )}
 
       {(phase === 'playing' || phase === 'trick_end') && (
         <div style={{ background: SURFACE, border: `1px solid ${isMyTurn ? GOLD + '66' : BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
