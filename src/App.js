@@ -515,18 +515,12 @@ export default function App() {
     useEffect(() => {
     // Only host drives dealing
     if (!room || !game || game.phase !== 'dealing' || game.dealComplete || mySeat !== 0) return;
-    // Stop timer if trump already declared — don't interfere with declarations
-    if (game.trumpDeclaration) return;
-
     clearTimeout(dealTimerRef.current);
     dealTimerRef.current = setTimeout(async () => {
       // Fetch fresh state
       const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
       const g = freshRoom?.game;
       if (!g || g.dealComplete || g.phase !== 'dealing') return;
-      // Stop if trump was declared while we waited
-      if (g.trumpDeclaration) return;
-
       // Check all-pass mid-deal
       const midConfirmed = g.trumpConfirmed || [];
       if (midConfirmed.length >= 4) {
