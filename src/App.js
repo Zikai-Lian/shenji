@@ -545,7 +545,8 @@ export default function App() {
 
       // All cards dealt?
       if (g.dealIndex >= (g.dealSequence?.length || 0)) {
-        if (g.trumpSuit) {
+        // Finalize if trump declared (includes joker declarations where trumpSuit is null)
+        if (g.trumpDeclaration) {
           const kittyHolder = g.roundNum === 1
             ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
             : (g.firstCardSeat ?? 0);
@@ -1155,7 +1156,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
             );
           })()}
 
-          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpSuit && (() => {
+          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpDeclaration && (() => {
             const confirmed = game.trumpConfirmed || [];
             const decl = game.trumpDeclaration;
             const declarerSeat = decl?.playerIdx ?? -1;
