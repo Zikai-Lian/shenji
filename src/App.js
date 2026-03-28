@@ -653,12 +653,19 @@ export default function App() {
     // ── CASE 1: No existing declaration — fresh call (1+ cards ok) ──────────
     if (!existingDecl) {
       const isLocked = !allJokers && selectedCards.length >= 3;
-      await updateRoom(room.id, { game: {
-        ...game,
-        trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
-        trumpSuit: newSuit,
-        log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
-      }});
+      console.log('[Declare] Case 1 - newSuit:', newSuit, 'isLocked:', isLocked, 'mySeat:', mySeat, 'room.id:', room?.id);
+      try {
+        await updateRoom(room.id, { game: {
+          ...game,
+          trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
+          trumpSuit: newSuit,
+          log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
+        }});
+        console.log('[Declare] updateRoom success');
+      } catch(e) {
+        console.error('[Declare] updateRoom FAILED:', e.message, e);
+        setError('Failed to declare: ' + e.message);
+      }
       setSelectedIds([]);
       return;
     }
