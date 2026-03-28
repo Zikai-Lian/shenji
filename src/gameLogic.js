@@ -800,7 +800,9 @@ function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
 // Returns { challengerSeat, components } or null
 export function findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpNumber) {
   const components = decomposeCombo(playedCards, trumpSuit, trumpNumber);
-  const order = [(leaderSeat + 3) % 4, (leaderSeat + 2) % 4, (leaderSeat + 1) % 4];
+  // Clockwise order: next seat, across, then prev seat
+  // All 3 other players (including teammate) can be forced to challenge
+  const order = [(leaderSeat + 1) % 4, (leaderSeat + 2) % 4, (leaderSeat + 3) % 4];
   for (const seat of order) {
     const hand = hands[seat] || [];
     if (components.some(comp => canBeatComponent(hand, comp, trumpSuit, trumpNumber))) {
@@ -944,7 +946,7 @@ export function decomposeCards(cards, leadSuit, trumpSuit, trumpNumber) {
 export function findMandatoryChallenger(leaderSeat, hands, leadCards, trumpSuit, trumpNumber) {
   const leadSuit = getLeadSuit(leadCards, trumpSuit, trumpNumber);
   const components = decomposeCards(leadCards, leadSuit, trumpSuit, trumpNumber);
-  const order = [(leaderSeat + 3) % 4, (leaderSeat + 2) % 4, (leaderSeat + 1) % 4];
+  const order = [(leaderSeat + 1) % 4, (leaderSeat + 2) % 4, (leaderSeat + 3) % 4];
   for (const seat of order) {
     const hand = hands[seat] || [];
     if (components.some(comp => canBeatComponent(comp, hand, trumpSuit, trumpNumber))) {
