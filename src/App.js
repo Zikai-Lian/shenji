@@ -363,6 +363,7 @@ export default function App() {
   };
   const [playerId, setPlayerId] = useState(null);
   const [restoring, setRestoring] = useState(true);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const subRef = useRef(null);
@@ -764,7 +765,10 @@ export default function App() {
     // Build discarded cards from freshGame hand to avoid stale myHand
     const freshHand = freshGame.hands[mySeat] || [];
     const discarded = freshHand.filter(c => selectedIds.includes(c.id));
-    if (discarded.length !== 6) return setError('Select exactly 6 cards to discard');
+    if (discarded.length !== 6) {
+      console.log('[Discard] selectedIds:', selectedIds.length, 'freshHand size:', freshHand.length, 'matched:', discarded.length);
+      return setError(`Select exactly 6 cards to discard (found ${discarded.length} of ${selectedIds.length} selected in hand)`);
+    }
     const newHand = freshHand.filter(c => !selectedIds.includes(c.id));
     const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
     await updateRoom(room.id, {
@@ -1008,6 +1012,7 @@ export default function App() {
           onDiscardKitty={handleDiscardKitty} onPlayCards={handlePlayCards}
           onNextRound={handleNextRound} playerId={playerId}
           onChallenge={handleChallenge} onConfirmPass={handleConfirmPass} onLeave={handleLeave}
+          confirmLeave={confirmLeave} setConfirmLeave={setConfirmLeave}
         />
       )}
     </div>
@@ -1016,10 +1021,11 @@ export default function App() {
 }
 
 // ── Game Screen ───────────────────────────────────────────────────────────────
-function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onConfirmPass, onLeave }) {
+function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onConfirmPass, onLeave, confirmLeave, setConfirmLeave }) {
   const [selectedCompIdx, setSelectedCompIdx] = useState(null);
   const phase = game?.phase;
-  const isMyTurn = (game.currentTurn === mySeat || game.currentTurn == null) && phase === 'playing';
+  const isMyTurn = game.currentTurn === mySeat && (phase === 'playing' || phase === 'trick_end');
+  const canPlay = game.currentTurn === mySeat && phase === 'playing';
   useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
 
   const effectiveKittyHolder = game.kittyHolder ??
@@ -1033,7 +1039,26 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
   return (
     <div style={{ width: '100%', maxWidth: '640px' }}>
 
+      {/* Leave room confirmation */}
+      {confirmLeave && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: '#000000cc', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: SURFACE, border: `1px solid ${RED}`, borderRadius: '12px', padding: '24px', maxWidth: '320px', width: '90%', textAlign: 'center' }}>
+            <div style={{ color: RED, fontWeight: 700, fontSize: '16px', marginBottom: '12px' }}>Leave Game?</div>
+            <div style={{ color: MUTED, fontSize: '13px', marginBottom: '20px' }}>Are you sure you want to leave? This may disrupt the game for other players.</div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button style={{ ...S.btn(MUTED), flex: 1 }} onClick={() => setConfirmLeave(false)}>Cancel</button>
+              <button style={{ ...S.btn(RED), flex: 1 }} onClick={onLeave}>Leave</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Scores & Info */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 16px', marginBottom: '4px' }}>
+        <button onClick={() => setConfirmLeave(true)} style={{ background: 'transparent', border: `1px solid ${BORDER}`, color: MUTED, borderRadius: '6px', padding: '4px 10px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' }}>
+          Leave Game
+        </button>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px', padding: '0 16px' }}>
         <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
           <div style={{ ...S.label, marginBottom: '4px' }}>Team A Level</div>
@@ -1304,7 +1329,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       })()}
 
 
-      {phase === 'playing' && (game.kittyHolder === mySeat || (game.kittyHolder == null && game.trumpDeclaration?.playerIdx === mySeat)) && game.kitty && game.kitty.length > 0 && (
+      {phase === 'playing' && isKittyHolder && game.kitty && game.kitty.length > 0 && (
         <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
           <div style={{ fontSize: '11px', color: MUTED, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>Your discarded kitty</div>
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -1315,7 +1340,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
 
       {(phase === 'playing' || phase === 'trick_end') && (
         <div style={{ background: SURFACE, border: `1px solid ${isMyTurn ? GOLD + '66' : BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-          {isMyTurn ? (
+          {canPlay ? (
             <>
               <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>Your Turn — Select cards to play</div>
               <button style={S.btn(GOLD)} onClick={onPlayCards}>
