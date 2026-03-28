@@ -698,12 +698,12 @@ export default function App() {
       // Same player can only reinforce same suit — cannot switch suits
       if (newSuit !== freshGame.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
       if (allJokers) return setError('You already declared a suit — cannot switch to jokers');
-      const newCount = currentCount + freshDeclSelected.length;
-      if (newCount < currentCount + 1) return setError('Must add at least 1 more card to reinforce');
+      const newCount = freshDeclSelected.length;
+      if (newCount <= currentCount) return setError(`Must play more than ${currentCount} card${currentCount>1?'s':''} to reinforce`);
       const isLocked = newCount >= 3;
       await updateRoom(room.id, { game: {
         ...freshGame,
-        trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
+        trumpDeclaration: { ...existingDecl, cards: freshDeclSelected, declarationCount: newCount, locked: isLocked },
         log: [...(freshGame.log || []), isLocked
           ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${freshGame.trumpNumber}s — locked!)`
           : `${declName} reinforces ${newSuit} trump (${newCount} cards — needs ${newCount + 1} to override).`],
