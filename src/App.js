@@ -645,7 +645,7 @@ export default function App() {
     const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
     const iAmDeclarer = existingDecl?.playerIdx === mySeat;
 
-    console.log('[Declare] allJokers:', allJokers, 'existingDecl:', existingDecl?.playerIdx, 'iAmDeclarer:', iAmDeclarer, 'mySeat:', mySeat);
+    console.log('[Declare] allJokers:', allJokers, 'existingDecl:', existingDecl?.playerIdx, 'existingDeclFull:', JSON.stringify(existingDecl), 'iAmDeclarer:', iAmDeclarer, 'mySeat:', mySeat, 'gameRef.trumpSuit:', gameRef.current.trumpSuit);
     // Validate cards: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
       if (!selectedCards.every(c => c.rank === gameRef.current.trumpNumber)) {
@@ -668,7 +668,7 @@ export default function App() {
       console.log('[Declare] Case 1 - newSuit:', newSuit, 'isLocked:', isLocked, 'mySeat:', mySeat, 'room.id:', room?.id);
       try {
         await updateRoom(room.id, { game: {
-          ...game,
+          ...gameRef.current,
           trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
           trumpSuit: newSuit,
           log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
@@ -694,7 +694,7 @@ export default function App() {
       if (newCount < currentCount + 1) return setError('Must add at least 1 more card to reinforce');
       const isLocked = newCount >= 3;
       await updateRoom(room.id, { game: {
-        ...game,
+        ...gameRef.current,
         trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
         log: [...(game.log || []), isLocked
           ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${gameRef.current.trumpNumber}s — locked!)`
@@ -712,7 +712,7 @@ export default function App() {
     // Reset confirmed passes so overridden player gets their pass button back
     const resetConfirmed = (game.trumpConfirmed || []).filter(s => s === mySeat);
     await updateRoom(room.id, { game: {
-      ...game,
+      ...gameRef.current,
       trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
       trumpSuit: newSuit,
       trumpConfirmed: resetConfirmed,
@@ -782,7 +782,7 @@ export default function App() {
         const { challengerSeat, components } = challengeResult;
         await updateRoom(room.id, {
           game: {
-            ...game,
+            ...gameRef.current,
             hands: newHands,
             phase: 'challenge',
             challenge: {
@@ -818,7 +818,7 @@ export default function App() {
 
     await updateRoom(room.id, {
       game: {
-        ...game,
+        ...gameRef.current,
         hands: newHands,
         phase: 'playing',
         challenge: null,
@@ -885,7 +885,7 @@ export default function App() {
 
     await updateRoom(room.id, {
       game: {
-        ...game,
+        ...gameRef.current,
         phase: 'dealing',
         hands: [[], [], [], []],
         dealSequence: sequence,
