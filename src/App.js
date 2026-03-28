@@ -509,28 +509,32 @@ export default function App() {
     useEffect(() => {
     // Only host drives dealing
     if (!room || !game || game.phase !== 'dealing' || game.dealComplete || mySeat !== 0) return;
+    // Stop timer if trump already declared — don't interfere with declarations
+    if (game.trumpDeclaration) return;
 
+    clearTimeout(dealTimerRef.current);
     dealTimerRef.current = setTimeout(async () => {
-      // Always fetch fresh state to avoid stale closure overwriting trump declarations etc.
+      // Fetch fresh state
       const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
       const g = freshRoom?.game;
       if (!g || g.dealComplete || g.phase !== 'dealing') return;
+      // Stop if trump was declared while we waited
+      if (g.trumpDeclaration) return;
 
       // Check all-pass mid-deal
-      if (!g.trumpSuit) {
-        const midConfirmed = g.trumpConfirmed || [];
-        if (midConfirmed.length >= 4) {
-          const trumpNum = g.trumpNumber;
-          let resolvedSuit = null;
-          for (const card of (g.kitty || [])) {
-            if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
-          }
-          if (!resolvedSuit) resolvedSuit = g.firstCardSuit || '♠';
-          const kittyHolder = g.firstCardSeat ?? 0;
-          await updateRoom(room.id, { game: { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-            log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${freshRoom.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
-          return;
+      const midConfirmed = g.trumpConfirmed || [];
+      if (midConfirmed.length >= 4) {
+        let resolvedSuit = null;
+        for (const card of (g.kitty || [])) {
+          if (card.rank === g.trumpNumber && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
         }
+        if (!resolvedSuit) resolvedSuit = g.firstCardSuit || '♠';
+        const kittyHolder = g.firstCardSeat ?? 0;
+        await updateRoomRemote(room.id, { game: { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
+          log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}.`] } });
+        const { data: d } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+        if (d) setRoom({ ...d });
+        return;
       }
 
       // All cards dealt?
@@ -539,42 +543,28 @@ export default function App() {
           const kittyHolder = g.roundNum === 1
             ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
             : (g.firstCardSeat ?? 0);
-          await updateRoom(room.id, { game: { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
-        } else {
-          const confirmed = g.trumpConfirmed || [];
-          if (confirmed.length >= 4) {
-            const trumpNum = g.trumpNumber;
-            let resolvedSuit = null;
-            for (const card of (g.kitty || [])) {
-              if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
-            }
-            if (!resolvedSuit) resolvedSuit = g.firstCardSuit || '♠';
-            const kittyHolder = g.firstCardSeat ?? 0;
-            await updateRoom(room.id, { game: { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-              log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${freshRoom.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
-          }
+          await updateRoomRemote(room.id, { game: { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
+          const { data: d } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+          if (d) setRoom({ ...d });
         }
+        // else wait for passes — UI handles it
         return;
       }
 
-      // Deal next card — re-fetch one more time right before writing to minimize race
-      const { data: preWriteRoom } = await supabase.from('rooms').select('game').eq('id', room.id).single();
-      const pg = preWriteRoom?.game;
-      if (!pg || pg.dealComplete || pg.dealIndex !== g.dealIndex) return; // someone else already wrote
-      if (pg.dealIndex === lastDealtIndexRef.current) return; // we already dealt this card
-      lastDealtIndexRef.current = pg.dealIndex;
-      const seq = pg.dealSequence;
-      const idx = pg.dealIndex;
-      const { seat, card } = seq[idx];
-      const newHands = pg.hands.map((h, i) => i === seat ? [...h, card] : h);
-      await updateRoomRemote(room.id, { game: { ...pg, hands: newHands, dealIndex: idx + 1,
-        firstCardSeat: idx === 0 ? seat : pg.firstCardSeat,
-        firstCardSuit: idx === 0 ? card.suit : pg.firstCardSuit,
+      // Deal next card — check index hasn't changed
+      if (g.dealIndex === lastDealtIndexRef.current) return;
+      lastDealtIndexRef.current = g.dealIndex;
+      const seq = g.dealSequence;
+      const { seat, card } = seq[g.dealIndex];
+      const newHands = g.hands.map((h, i) => i === seat ? [...h, card] : h);
+      await updateRoomRemote(room.id, { game: { ...g, hands: newHands, dealIndex: g.dealIndex + 1,
+        firstCardSeat: g.dealIndex === 0 ? seat : g.firstCardSeat,
+        firstCardSuit: g.dealIndex === 0 ? card.suit : g.firstCardSuit,
       }});
     }, 250);
 
     return () => clearTimeout(dealTimerRef.current);
-  }, [game?.dealIndex, game?.phase, game?.dealComplete]);
+  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpDeclaration]);
 
   const toggleCard = (cardId) => {
     setSelectedIds(prev =>
