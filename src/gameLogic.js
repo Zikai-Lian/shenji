@@ -1,1286 +1,955 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase, createRoom, joinRoom, updateRoom, subscribeToRoom } from './supabase';
-import {
-  buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
-  detectCombo, trickWinner, countPoints, cardPoints,
-  attackerLevelGain, defenderLevelGain, kittyMultiplier,
-  canDeclareTrump, getTrumpSuitFromDeclaration, validateFollow,
-  findChallenger, decomposeCombo, LEVELS, SUITS, RANKS
-} from './gameLogic';
+// ── Sheng Ji Game Logic ──────────────────────────────────────────────────────
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-const GOLD = '#c9a140';
-const RED = '#e05252';
-const GREEN = '#52a869';
-const BG = '#0d1117';
-const SURFACE = '#161b22';
-const BORDER = '#30363d';
-const TEXT = '#e6edf3';
-const MUTED = '#7d8590';
+export const SUITS = ['♠', '♥', '♦', '♣'];
+export const RANKS = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+export const LEVELS = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
 
-const S = {
-  app: { minHeight: '100vh', background: BG, color: TEXT, fontFamily: "'Noto Serif SC', 'Georgia', serif", display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px' },
-  title: { fontSize: 'clamp(28px, 6vw, 52px)', fontWeight: 700, color: GOLD, letterSpacing: '0.15em', textAlign: 'center', marginBottom: '8px', textShadow: `0 0 40px ${GOLD}44` },
-  subtitle: { color: MUTED, fontSize: '13px', letterSpacing: '0.2em', textAlign: 'center', marginBottom: '40px', textTransform: 'uppercase' },
-  card: { background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '12px', padding: '32px', width: '100%', maxWidth: '440px' },
-  input: { width: '100%', background: '#0d1117', border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '12px 16px', color: TEXT, fontSize: '16px', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', marginBottom: '12px' },
-  btn: (color = GOLD) => ({ background: color, color: color === GOLD ? '#000' : '#fff', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', width: '100%', marginBottom: '8px', fontFamily: 'inherit', letterSpacing: '0.05em', transition: 'opacity 0.15s' }),
-  btnOutline: { background: 'transparent', color: MUTED, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '12px 24px', fontSize: '15px', cursor: 'pointer', width: '100%', fontFamily: 'inherit' },
-  label: { fontSize: '11px', color: MUTED, letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: '8px', display: 'block' },
-  section: { marginBottom: '20px' },
-  error: { color: RED, fontSize: '13px', marginBottom: '12px', padding: '8px 12px', background: '#e0525211', borderRadius: '6px', border: `1px solid ${RED}44` },
-  playingCard: (selected, suit) => ({
-    display: 'inline-flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between',
-    width: '52px', height: '76px', background: selected ? '#fff9e6' : '#fff',
-    border: `2px solid ${selected ? GOLD : '#ddd'}`,
-    borderRadius: '6px', cursor: 'pointer', padding: '4px 5px',
-    color: (suit === '♥' || suit === '♦' || suit === 'JOKER') ? '#e03030' : '#111',
-    fontSize: '13px', fontWeight: 700, userSelect: 'none', flexShrink: 0,
-    boxShadow: selected ? `0 0 12px ${GOLD}88` : '0 1px 3px rgba(0,0,0,0.2)',
-    transition: 'all 0.1s', transform: selected ? 'translateY(-8px)' : 'none',
-    position: 'relative',
-  }),
-  hand: { display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '20px 44px 8px 44px', gap: '0px', alignItems: 'flex-end', minHeight: '110px', WebkitOverflowScrolling: 'touch' },
-  trickSlot: { width: '60px', height: '88px', border: `1px dashed ${BORDER}`, borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: MUTED, fontSize: '11px' },
-  badge: (color) => ({ background: `${color}22`, border: `1px solid ${color}66`, color, borderRadius: '4px', padding: '2px 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.05em' }),
-  playerSlot: (active, isMe) => ({
-    padding: '10px 16px', borderRadius: '8px', border: `1px solid ${active ? GOLD : isMe ? '#3fb95044' : BORDER}`,
-    background: active ? `${GOLD}11` : isMe ? '#3fb95011' : 'transparent',
-    transition: 'all 0.2s',
-  }),
-};
-
-// ── Card component ────────────────────────────────────────────────────────────
-function FacePortrait({ rank, suit, color, w, h }) {
-  const isRed = color === '#cc2200';
-  const cx = w / 2;
-  const innerW = w - 10;
-  const innerH = h - 4;
-
-  const faceY = rank === 'K' ? 22 : rank === 'Q' ? 20 : 21;
-  const faceRx = rank === 'Q' ? 10 : 9;
-  const faceRy = rank === 'Q' ? 12 : 10;
-
-  const hairCol = isRed ? '#7a1a00' : '#1a0a00';
-  const skinCol = '#f5d5a0';
-  const clothCol = isRed ? '#cc2200' : '#0a1a4a';
-  const crownCol = '#c9a140';
-
-  return (
-    <svg width={innerW} height={innerH} viewBox={`0 0 ${innerW} ${innerH}`} style={{display:'block'}}>
-      <rect width={innerW} height={innerH} fill={isRed ? '#fff5f5' : '#f5f5ff'} rx="3"/>
-      <rect x="1.5" y="1.5" width={innerW-3} height={innerH-3} fill="none" stroke={color} strokeWidth="1" rx="2" opacity="0.4"/>
-
-      {rank === 'K' && <>
-        <polygon points={`5,20 ${cx-6},12 ${cx},6 ${cx+6},12 ${innerW-5},20`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <rect x="4" y="19" width={innerW-8} height="4" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <circle cx={cx} cy="8" r="3" fill="#cc3333"/>
-        <circle cx={cx-7} cy="13" r="2" fill="#3333cc"/>
-        <circle cx={cx+7} cy="13" r="2" fill="#33cc33"/>
-      </>}
-      {rank === 'Q' && <>
-        <polygon points={`8,19 ${cx-5},13 ${cx},8 ${cx+5},13 ${innerW-8},19`} fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <rect x="7" y="18" width={innerW-14} height="3" fill={crownCol} stroke="#8a6010" strokeWidth="0.8"/>
-        <circle cx={cx} cy="10" r="2.5" fill={isRed ? '#cc3333' : '#3333cc'}/>
-      </>}
-      {rank === 'J' && <>
-        <path d={`M${cx-10},20 Q${cx-6},8 ${cx},6 Q${cx+6},8 ${cx+10},20 Z`} fill={clothCol} opacity="0.9"/>
-        <circle cx={cx} cy="5" r="3" fill={isRed ? '#e05252' : '#4466cc'}/>
-      </>}
-
-      {rank === 'K' && <ellipse cx={cx} cy={faceY+2} rx={faceRx+3} ry={faceRy+6} fill={hairCol}/>}
-      {rank === 'Q' && <>
-        <ellipse cx={cx} cy={faceY+2} rx={faceRx+4} ry={faceRy+8} fill={hairCol}/>
-        <path d={`M${cx-faceRx-2},${faceY+6} Q${cx-faceRx-8},${faceY+12} ${cx-faceRx-4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
-        <path d={`M${cx+faceRx+2},${faceY+6} Q${cx+faceRx+8},${faceY+12} ${cx+faceRx+4},${faceY+18}`} fill="none" stroke={hairCol} strokeWidth="3"/>
-      </>}
-      {rank === 'J' && <ellipse cx={cx} cy={faceY+1} rx={faceRx+2} ry={faceRy+2} fill={hairCol}/>}
-
-      <ellipse cx={cx} cy={faceY+4} rx={faceRx} ry={faceRy} fill={skinCol}/>
-
-      <ellipse cx={cx-4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
-      <ellipse cx={cx+4} cy={faceY+1} rx="2" ry="1.5" fill="#1a1a1a"/>
-      <circle cx={cx-3.5} cy={faceY+0.8} r="0.6" fill="white"/>
-      <circle cx={cx+4.5} cy={faceY+0.8} r="0.6" fill="white"/>
-
-      <path d={`M${cx-6},${faceY-2} Q${cx-4},${faceY-3.5} ${cx-2},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
-      <path d={`M${cx+2},${faceY-2} Q${cx+4},${faceY-3.5} ${cx+6},${faceY-2}`} fill="none" stroke={hairCol} strokeWidth="1.2" strokeLinecap="round"/>
-
-      <path d={`M${cx},${faceY+3} Q${cx+2},${faceY+6} ${cx},${faceY+7}`} fill="none" stroke="#c8a070" strokeWidth="0.8"/>
-
-      {rank === 'K' && <>
-        <path d={`M${cx-5},${faceY+8} Q${cx},${faceY+10} ${cx+5},${faceY+8}`} fill="none" stroke={hairCol} strokeWidth="1.5" strokeLinecap="round"/>
-        <ellipse cx={cx} cy={faceY+11} rx="5" ry="3" fill={hairCol} opacity="0.7"/>
-      </>}
-      {rank === 'Q' && <path d={`M${cx-4},${faceY+8} Q${cx},${faceY+11} ${cx+4},${faceY+8}`} fill="none" stroke={isRed?'#cc2200':'#883333'} strokeWidth="1.5" strokeLinecap="round"/>}
-      {rank === 'J' && <path d={`M${cx-3},${faceY+8} Q${cx},${faceY+10} ${cx+3},${faceY+8}`} fill="none" stroke="#883333" strokeWidth="1" strokeLinecap="round"/>}
-
-      <path d={`M${cx-innerW/2+2},${innerH} L${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+8} L${cx+8},${faceY+faceRy+4} L${cx+innerW/2-2},${innerH}`} fill={clothCol}/>
-      <path d={`M${cx-8},${faceY+faceRy+4} L${cx},${faceY+faceRy+6} L${cx+8},${faceY+faceRy+4}`} fill="none" stroke={isRed?'#ff9999':'#9999ff'} strokeWidth="1"/>
-      <text x={cx} y={innerH-8} textAnchor="middle" fontSize="10" fill={isRed?'#ffaaaa':'#aaaaff'} opacity="0.8">{suit}</text>
-    </svg>
-  );
+// Build 3 decks (162 cards + 6 jokers per deck = 162 + 18 = 180? No: 52*3=156 + 6 jokers*3=18 = 174? 
+// Standard deck: 52 cards + 2 jokers = 54. 3 decks = 162 cards total.
+export function buildDecks() {
+  const cards = [];
+  let id = 0;
+  for (let d = 0; d < 3; d++) {
+    for (const suit of SUITS) {
+      for (const rank of RANKS) {
+        cards.push({ id: id++, suit, rank, deck: d });
+      }
+    }
+    cards.push({ id: id++, suit: 'JOKER', rank: 'BIG', deck: d });
+    cards.push({ id: id++, suit: 'JOKER', rank: 'SMALL', deck: d });
+  }
+  return cards; // 162 cards
 }
 
-
-function PlayingCard({ card, selected, onClick, small }) {
-  const isRed = card.suit === '\u2665' || card.suit === '\u2666' || card.suit === 'JOKER';
-  const isJoker = card.suit === 'JOKER';
-  const rank = isJoker ? (card.rank === 'BIG' ? 'BIG' : 'SML') : card.rank;
-  const suit = card.suit;
-  const color = isRed ? '#cc2200' : '#1a1a1a';
-  const w = small ? 40 : 64;
-  const h = small ? 56 : 92;
-  const fs = small ? 9 : 13;
-  const marginLeft = selected ? (small ? -10 : -14) : (small ? -14 : -22);
-
-  const PIP_LAYOUTS = {
-    'A':  [[0.5,0.5,false]],
-    '2':  [[0.2,0.5,false],[0.8,0.5,true]],
-    '3':  [[0.2,0.5,false],[0.5,0.5,false],[0.8,0.5,true]],
-    '4':  [[0.22,0.28,false],[0.22,0.72,false],[0.78,0.28,true],[0.78,0.72,true]],
-    '5':  [[0.22,0.28,false],[0.22,0.72,false],[0.5,0.5,false],[0.78,0.28,true],[0.78,0.72,true]],
-    '6':  [[0.22,0.28,false],[0.22,0.72,false],[0.5,0.28,false],[0.5,0.72,false],[0.78,0.28,true],[0.78,0.72,true]],
-    '7':  [[0.2,0.28,false],[0.2,0.72,false],[0.37,0.5,false],[0.52,0.28,false],[0.52,0.72,false],[0.78,0.28,true],[0.78,0.72,true]],
-    '8':  [[0.18,0.28,false],[0.18,0.72,false],[0.36,0.5,false],[0.5,0.28,false],[0.5,0.72,false],[0.64,0.5,true],[0.82,0.28,true],[0.82,0.72,true]],
-    '9':  [[0.15,0.28,false],[0.15,0.72,false],[0.37,0.28,false],[0.37,0.72,false],[0.5,0.5,false],[0.63,0.28,true],[0.63,0.72,true],[0.85,0.28,true],[0.85,0.72,true]],
-    '10': [[0.12,0.28,false],[0.12,0.72,false],[0.32,0.28,false],[0.32,0.72,false],[0.48,0.28,false],[0.48,0.72,false],[0.68,0.28,true],[0.68,0.72,true],[0.88,0.28,true],[0.88,0.72,true]],
-  };
-
-  const isFace = ['J','Q','K'].includes(card.rank);
-  const pips = PIP_LAYOUTS[card.rank];
-  const pipSize = card.rank === 'A' ? (small ? 14 : 26) : (small ? 8 : 12);
-
-  const cardStyle = {
-    display: 'inline-block', width: `${w}px`, height: `${h}px`, minWidth: `${w}px`,
-    background: 'linear-gradient(160deg,#ffffff,#f5f5f5)',
-    border: `${selected ? 2 : 1.5}px solid ${selected ? GOLD : '#bbb'}`,
-    borderRadius: small ? '4px' : '7px', cursor: 'pointer',
-    boxShadow: selected ? `0 -12px 24px ${GOLD}66,0 4px 10px rgba(0,0,0,0.35)` : '0 2px 6px rgba(0,0,0,0.28)',
-    transform: selected ? 'translateY(-18px)' : 'none', transition: 'all 0.12s ease',
-    position: 'relative', marginLeft: `${marginLeft}px`,
-    flexShrink: 0, overflow: 'hidden', userSelect: 'none', zIndex: selected ? 10 : 'auto',
-  };
-
-  const Corner = ({ flip }) => (
-    <div style={{
-      position:'absolute',
-      top: flip ? 'auto' : '3px',
-      bottom: flip ? '3px' : 'auto',
-      left: flip ? 'auto' : '4px',
-      right: flip ? '4px' : 'auto',
-      display:'flex', flexDirection:'column', alignItems:'center',
-      lineHeight: 1.1, zIndex: 2,
-      transform: flip ? 'rotate(180deg)' : 'none',
-    }}>
-      <span style={{ fontSize:`${fs}px`, fontWeight:900, color, fontFamily:'Georgia,serif', display:'block' }}>{rank}</span>
-      {!isJoker && <span style={{ fontSize: small ? '7px' : '9px', color, lineHeight:1, display:'block', marginTop:'1px' }}>{suit}</span>}
-    </div>
-  );
-
-  return (
-    <div style={cardStyle} onClick={onClick}>
-      <Corner flip={false} />
-      <Corner flip={true} />
-      {isJoker && (
-        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', textAlign:'center' }}>
-          <div style={{ fontSize: small?'18px':'28px' }}>{card.rank === 'BIG' ? '\uD83C\uDCCF' : '\uD83E\uDD21'}</div>
-          {!small && <div style={{ fontSize:'7px', color:'#888', marginTop:'2px', letterSpacing:'0.1em' }}>{card.rank} JOKER</div>}
-        </div>
-      )}
-      {!isJoker && !small && isFace && (
-        <div style={{ position:'absolute', top:'22px', left:'5px', right:'5px', bottom:'22px' }}>
-          <FacePortrait rank={card.rank} suit={suit} color={color} w={w-10} h={h-36} />
-        </div>
-      )}
-      {!isJoker && !small && !isFace && pips && (
-        <div style={{ position:'absolute', top:`${Math.round(h*0.19)}px`, left:'4px', right:'4px', bottom:`${Math.round(h*0.19)}px` }}>
-          {pips.map(([top,left,flip],i) => (
-            <span key={i} style={{
-              position:'absolute', top:`${top*100}%`, left:`${left*100}%`,
-              transform:`translate(-50%,-50%)${flip?' rotate(180deg)':''}`,
-              fontSize:`${pipSize}px`, color, lineHeight:1, display:'block',
-            }}>{suit}</span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+export function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
-
-// ── Lobby Screen ──────────────────────────────────────────────────────────────
-function LobbyScreen({ room, playerId, onStart, onKick, onClaimSeat, onLeaveSeat, onLeave }) {
-  const isHost = room.host_id === playerId;
-  const me = room.players.find(p => p.id === playerId);
-  const mySeatedSeat = me?.seat ?? -1; // -1 means spectating (no seat claimed)
-  const seatedCount = room.players.filter(p => p.seat !== -1).length;
-  const canStart = seatedCount === 4;
-  const TEAM_A_COLOR = GOLD;
-  const TEAM_B_COLOR = '#52a8a8';
-
-  return (
-    <div style={{ width: '100%', maxWidth: '480px' }}>
-      <div style={S.card}>
-        {/* Room code */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-          <span style={S.label}>Room Code</span>
-          <span style={{ fontSize: '28px', fontWeight: 900, color: GOLD, letterSpacing: '0.3em' }}>{room.code}</span>
-        </div>
-
-        {/* My status banner */}
-        <div style={{ background: mySeatedSeat === -1 ? '#1a1200' : `${mySeatedSeat % 2 === 0 ? TEAM_A_COLOR : TEAM_B_COLOR}11`,
-          border: `1px solid ${mySeatedSeat === -1 ? GOLD + '33' : mySeatedSeat % 2 === 0 ? TEAM_A_COLOR + '44' : TEAM_B_COLOR + '44'}`,
-          borderRadius: '8px', padding: '10px 14px', marginBottom: '18px',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '13px', color: mySeatedSeat === -1 ? MUTED : TEXT }}>
-            {mySeatedSeat === -1 ? '👀 You are spectating — pick a seat below' : `✓ You are in Seat ${mySeatedSeat + 1} (${mySeatedSeat % 2 === 0 ? 'Team A' : 'Team B'})`}
-          </span>
-          {mySeatedSeat !== -1 && (
-            <button onClick={onLeaveSeat} style={{
-              background: 'transparent', border: '1px solid #55555588', color: MUTED,
-              borderRadius: '6px', padding: '3px 10px', fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit'
-            }}>Leave seat</button>
-          )}
-        </div>
-
-        {/* Team labels */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-          <div style={{ textAlign: 'center', fontSize: '11px', color: TEAM_A_COLOR, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Team A</div>
-          <div style={{ textAlign: 'center', fontSize: '11px', color: TEAM_B_COLOR, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Team B</div>
-        </div>
-
-        {/* Seat grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '20px' }}>
-          {[0, 1, 2, 3].map(seat => {
-            const player = room.players.find(p => p.seat === seat);
-            const isMyCurrentSeat = seat === mySeatedSeat;
-            const isOccupied = !!player && player.seat === seat && player.seat !== -1;
-            const teamColor = seat % 2 === 0 ? TEAM_A_COLOR : TEAM_B_COLOR;
-            const canSit = !isOccupied && mySeatedSeat === -1; // only can sit if seat free AND I have no seat
-
-            return (
-              <div key={seat} style={{
-                border: `1px solid ${isMyCurrentSeat ? teamColor : isOccupied ? BORDER : BORDER + '88'}`,
-                background: isMyCurrentSeat ? `${teamColor}18` : isOccupied ? SURFACE : '#0d1117',
-                borderRadius: '10px', padding: '14px', minHeight: '90px',
-                display: 'flex', flexDirection: 'column', gap: '6px',
-              }}>
-                <div style={{ fontSize: '10px', color: teamColor, letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>
-                  Seat {seat + 1}
-                </div>
-
-                {isOccupied ? (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flex: 1 }}>
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: isMyCurrentSeat ? 700 : 400, color: TEXT }}>
-                        {player.name}
-                      </div>
-                      <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
-                        {isMyCurrentSeat && <span style={S.badge(GREEN)}>YOU</span>}
-                        {player.id === room.host_id && <span style={S.badge(GOLD)}>HOST</span>}
-                      </div>
-                    </div>
-                    {isHost && !isMyCurrentSeat && (
-                      <button onClick={() => onKick(player.id)} style={{
-                        background: 'transparent', border: '1px solid #e0525244', color: '#e05252',
-                        borderRadius: '6px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer',
-                      }}>Kick</button>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-                    {canSit ? (
-                      <button onClick={() => onClaimSeat(seat)} style={{
-                        ...S.btn(teamColor), padding: '7px 10px', fontSize: '12px', marginBottom: 0
-                      }}>Sit here</button>
-                    ) : mySeatedSeat !== -1 && !isMyCurrentSeat ? (
-                      <span style={{ color: BORDER, fontSize: '12px', fontStyle: 'italic' }}>
-                        Leave your seat first
-                      </span>
-                    ) : (
-                      <span style={{ color: MUTED, fontSize: '12px', fontStyle: 'italic' }}>Empty</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={{ color: MUTED, fontSize: '12px', marginBottom: '16px', textAlign: 'center' }}>
-          Seats 1 & 3 = Team A &nbsp;·&nbsp; Seats 2 & 4 = Team B
-        </div>
-
-        {isHost ? (
-          <button style={S.btn(canStart ? GOLD : '#444')} disabled={!canStart} onClick={onStart}>
-            {canStart ? '▶ Start Game' : `Waiting for all seats (${seatedCount}/4)`}
-          </button>
-        ) : (
-          <div style={{ textAlign: 'center', color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
-            Waiting for host to start...
-          </div>
-        )}
-        <button onClick={onLeave} style={{
-          background: 'transparent', border: '1px solid #e0525244', color: '#e05252',
-          borderRadius: '8px', padding: '10px', fontSize: '13px', cursor: 'pointer',
-          width: '100%', marginTop: '8px', fontFamily: 'inherit'
-        }}>Leave Room</button>
-      </div>
-    </div>
-  );
+export function dealCardsSequential(cards) {
+  // Returns the full sequence of deals: [{seat, card}] then kitty at end
+  const shuffled = shuffle(cards);
+  const kitty = shuffled.slice(0, 6);
+  const remaining = shuffled.slice(6);
+  const sequence = remaining.map((card, i) => ({ seat: i % 4, card }));
+  return { sequence, kitty };
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
-export default function App() {
-  const [screen, setScreen] = useState('home'); // home | lobby | game
-  const [playerName, setPlayerName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
-  const [room, setRoom] = useState(null);
-  const [playerId, setPlayerId] = useState(null);
-  const [restoring, setRestoring] = useState(true);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const subRef = useRef(null);
+export function dealCards(cards) {
+  const shuffled = shuffle(cards);
+  const kitty = shuffled.slice(0, 6);
+  const remaining = shuffled.slice(6); // 156 cards
+  const hands = [[], [], [], []];
+  remaining.forEach((card, i) => hands[i % 4].push(card));
+  return { hands, kitty };
+}
 
-  // ── Restore session on refresh ───────────────────────────────────────────
-  useEffect(() => {
-    const saved = localStorage.getItem('shengji_session');
-    if (saved) {
-      try {
-        const { roomId, playerId: pid } = JSON.parse(saved);
-        // Re-fetch the room and rejoin if our seat is still there
-        supabase.from('rooms').select('*').eq('id', roomId).single()
-          .then(({ data, error }) => {
-            if (!error && data && data.players.find(p => p.id === pid)) {
-              setRoom(data);
-              setPlayerId(pid);
-              setScreen(data.state === 'game' ? 'game' : 'lobby');
-            } else {
-              // Room gone or player removed — clear stale session
-              localStorage.removeItem('shengji_session');
-            }
-            setRestoring(false);
-          });
-      } catch {
-        localStorage.removeItem('shengji_session');
-        setRestoring(false);
+// ── Trump helpers ─────────────────────────────────────────────────────────────
+
+export function isTrump(card, trumpSuit, trumpNumber) {
+  if (card.suit === 'JOKER') return true;
+  if (card.rank === trumpNumber) return true;
+  if (trumpSuit && card.suit === trumpSuit) return true;
+  return false;
+}
+
+// Returns numeric rank for comparison within trump
+// Higher = stronger
+export function trumpRank(card, trumpSuit, trumpNumber) {
+  if (card.suit === 'JOKER' && card.rank === 'BIG') return 1000;
+  if (card.suit === 'JOKER' && card.rank === 'SMALL') return 999;
+  if (card.rank === trumpNumber && card.suit === trumpSuit) return 998;
+  if (card.rank === trumpNumber) return 997 - SUITS.indexOf(card.suit);
+  // Regular trump suit card
+  return RANKS.indexOf(card.rank);
+}
+
+// Returns numeric rank for comparison within a non-trump suit
+export function suitRank(card) {
+  return RANKS.indexOf(card.rank);
+}
+
+// ── Combo detection ───────────────────────────────────────────────────────────
+
+// Group cards by their "effective key" for pairing/tripling
+function cardKey(card, trumpSuit, trumpNumber) {
+  if (card.suit === 'JOKER') return `JOKER_${card.rank}`;
+  if (card.rank === trumpNumber && card.suit === trumpSuit) return `TRUMP_NUM_TRUMP_SUIT`;
+  if (card.rank === trumpNumber) return `TRUMP_NUM_${card.suit}`;
+  return `${card.suit}_${card.rank}`;
+}
+
+function groupByKey(cards, trumpSuit, trumpNumber) {
+  const groups = {};
+  for (const card of cards) {
+    const key = cardKey(card, trumpSuit, trumpNumber);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(card);
+  }
+  return groups;
+}
+
+// Get combo type from a set of played cards
+export function detectCombo(cards, trumpSuit, trumpNumber) {
+  const n = cards.length;
+  const allTrump = cards.every(c => isTrump(c, trumpSuit, trumpNumber));
+  const suits = [...new Set(cards.filter(c => c.suit !== 'JOKER').map(c => c.suit))];
+  const nonTrumpSuits = suits.filter(s => s !== trumpSuit);
+
+  const groups = groupByKey(cards, trumpSuit, trumpNumber);
+  const keys = Object.keys(groups);
+  const counts = keys.map(k => groups[k].length);
+
+  // Single
+  if (n === 1) return { type: 'single', valid: true };
+
+  // Pair
+  if (n === 2 && keys.length === 1 && counts[0] === 2) return { type: 'pair', valid: true };
+
+  // Triple
+  if (n === 3 && keys.length === 1 && counts[0] === 3) return { type: 'triple', valid: true };
+
+  // Check tractor (consecutive pairs/triples in trump chain)
+  if (allTrump || nonTrumpSuits.length <= 1) {
+    const tractorResult = detectTractor(cards, trumpSuit, trumpNumber);
+    if (tractorResult) return tractorResult;
+  }
+
+  // Mixed combo (big play) - valid if player claims it
+  if (n > 1) return { type: 'mixed', valid: true, cards };
+
+  return { type: 'invalid', valid: false };
+}
+
+function getTrumpOrder(trumpSuit, trumpNumber) {
+  // Returns ordered trump "slots" from lowest to highest
+  // Each slot is a key
+  const order = [];
+  if (!trumpSuit || !trumpNumber) return order;
+  // Regular trump suit cards (by rank, excluding trump number)
+  for (const rank of RANKS) {
+    if (rank !== trumpNumber) {
+      order.push(`${trumpSuit}_${rank}`);
+    }
+  }
+  // Trump number of non-trump suits
+  for (const suit of SUITS) {
+    if (suit !== trumpSuit) {
+      order.push(`TRUMP_NUM_${suit}`);
+    }
+  }
+  // Trump number of trump suit
+  order.push(`TRUMP_NUM_TRUMP_SUIT`);
+  // Small jokers
+  order.push(`JOKER_SMALL`);
+  // Big jokers
+  order.push(`JOKER_BIG`);
+  return order;
+}
+
+function detectTractor(cards, trumpSuit, trumpNumber) {
+  const groups = groupByKey(cards, trumpSuit, trumpNumber);
+  const keys = Object.keys(groups);
+  const counts = Object.values(groups).map(g => g.length);
+
+  // All groups must have same count (all pairs or all triples)
+  const groupSize = counts[0];
+  if (!counts.every(c => c === groupSize)) return null;
+  if (groupSize < 2) return null;
+
+  const numGroups = keys.length;
+  if (numGroups < 2) return null;
+
+  // Check if all cards are trump
+  const allTrump = cards.every(c => isTrump(c, trumpSuit, trumpNumber));
+
+  if (allTrump) {
+    const order = getTrumpOrder(trumpSuit, trumpNumber);
+    const positions = keys.map(k => order.indexOf(k));
+    if (positions.some(p => p === -1)) return null;
+    positions.sort((a, b) => a - b);
+    // Must be consecutive
+    for (let i = 1; i < positions.length; i++) {
+      if (positions[i] !== positions[i - 1] + 1) return null;
+    }
+    if (groupSize === 2) return { type: numGroups >= 2 ? 'pair_tractor' : 'pair', valid: true, groups: numGroups, size: groupSize };
+    if (groupSize === 3) return { type: numGroups >= 2 ? 'triple_tractor' : 'triple', valid: true, groups: numGroups, size: groupSize };
+  } else {
+    // Non-trump: all must be same suit, consecutive ranks
+    const suits = [...new Set(cards.map(c => c.suit))];
+    if (suits.length > 1) return null;
+    const ranks = keys.map(k => RANKS.indexOf(k.split('_')[1]));
+    ranks.sort((a, b) => a - b);
+    for (let i = 1; i < ranks.length; i++) {
+      if (ranks[i] !== ranks[i - 1] + 1) return null;
+    }
+    if (groupSize === 2) return { type: 'pair_tractor', valid: true, groups: numGroups, size: groupSize };
+    if (groupSize === 3) return { type: 'triple_tractor', valid: true, groups: numGroups, size: groupSize };
+  }
+  return null;
+}
+
+// ── Trick winning ─────────────────────────────────────────────────────────────
+
+export function trickWinner(plays, trumpSuit, trumpNumber) {
+  // plays: [{playerIdx, cards}]
+  const lead = plays[0];
+  const leadCards = lead.cards;
+  const leadSuit = getLeadSuit(leadCards, trumpSuit, trumpNumber);
+
+  let winner = 0;
+  let winningCards = leadCards;
+
+  for (let i = 1; i < plays.length; i++) {
+    const c = plays[i].cards;
+    if (beats(c, winningCards, leadSuit, trumpSuit, trumpNumber)) {
+      winner = i;
+      winningCards = c;
+    }
+  }
+  return plays[winner].playerIdx;
+}
+
+function getLeadSuit(cards, trumpSuit, trumpNumber) {
+  if (cards.every(c => isTrump(c, trumpSuit, trumpNumber))) return 'TRUMP';
+  const nonTrump = cards.find(c => !isTrump(c, trumpSuit, trumpNumber));
+  return nonTrump ? nonTrump.suit : 'TRUMP';
+}
+
+function beats(challenger, current, leadSuit, trumpSuit, trumpNumber) {
+  const chalTrump = challenger.every(c => isTrump(c, trumpSuit, trumpNumber));
+  const currTrump = current.every(c => isTrump(c, trumpSuit, trumpNumber));
+  const chalSuit = getLeadSuit(challenger, trumpSuit, trumpNumber);
+
+  // Trump beats non-trump entirely
+  if (chalTrump && !currTrump) return true;
+  if (!chalTrump && currTrump) return false;
+
+  // Must be same suit as lead to beat
+  if (!chalTrump && chalSuit !== leadSuit) return false;
+  if (chalTrump && !currTrump) return true; // already handled above
+
+  // Both same suit — detect combo types and enforce matching
+  const chalCombo = detectCombo(challenger, trumpSuit, trumpNumber);
+  const currCombo = detectCombo(current, trumpSuit, trumpNumber);
+
+  const comboTier = (type) => {
+    const tiers = { single: 0, pair: 1, triple: 2, pair_tractor: 3, triple_tractor: 4, mixed: -1 };
+    return tiers[type] ?? -1;
+  };
+
+  const chalTier = comboTier(chalCombo.type);
+  const currTier = comboTier(currCombo.type);
+
+  // Challenger must be the SAME combo tier — a tractor cannot beat a pair,
+  // a pair cannot beat a single. Only like-for-like combos compete.
+  if (chalTier !== currTier) return false;
+
+  // Compare highest individual card ranks
+  const rankOf = (card) =>
+    isTrump(card, trumpSuit, trumpNumber)
+      ? trumpRank(card, trumpSuit, trumpNumber)
+      : suitRank(card);
+
+  const chalMax = Math.max(...challenger.map(rankOf));
+  const currMax = Math.max(...current.map(rankOf));
+  return chalMax > currMax;
+}
+
+// ── Scoring ───────────────────────────────────────────────────────────────────
+
+export function cardPoints(card) {
+  if (card.suit === 'JOKER') return 0;
+  if (card.rank === '5') return 5;
+  if (card.rank === '10' || card.rank === 'K') return 10;
+  return 0;
+}
+
+export function countPoints(cards) {
+  return cards.reduce((sum, c) => sum + cardPoints(c), 0);
+}
+
+// Kitty multiplier: player chooses best interpretation
+export function kittyMultiplier(winningCards, trumpSuit, trumpNumber) {
+  // Find the lowest tier combo component and its card count
+  // Tier: single=1, pair=2, triple=3, pair_tractor=4, triple_tractor=5
+  const combo = detectCombo(winningCards, trumpSuit, trumpNumber);
+  const tierSizes = { single: 1, pair: 2, triple: 3, pair_tractor: 4, triple_tractor: 6 };
+  const size = tierSizes[combo.type] || 1;
+  return size * 2;
+}
+
+// Attacker level gain based on defender score
+export function attackerLevelGain(defenderScore) {
+  if (defenderScore >= 120) return 0; // defenders win
+  if (defenderScore >= 60) return 1;
+  if (defenderScore >= 1) return 2;
+  return 3; // 0 points
+}
+
+// Defender level gain when they win
+export function defenderLevelGain(defenderScore) {
+  return Math.floor(defenderScore / 60) - 2;
+}
+
+// ── Trump declaration ─────────────────────────────────────────────────────────
+
+export function canDeclareTrump(cards, currentDeclaration, trumpNumber) {
+  if (!cards || cards.length === 0) return false;
+  const allJokers = cards.every(c => c.suit === 'JOKER');
+  const allSameRank = cards.every(c => c.rank === cards[0].rank);
+  if (!allSameRank && !allJokers) return false;
+  // Jokers: must be all BIG or all SMALL (no mixing), and need 2+
+  if (allJokers) {
+    const allBig = cards.every(c => c.rank === 'BIG');
+    const allSmall = cards.every(c => c.rank === 'SMALL');
+    if (!allBig && !allSmall) return false; // mixed jokers not allowed
+    if (cards.length < 2) return false;
+  }
+  if (!allJokers && cards[0].rank !== trumpNumber) return false;
+  if (currentDeclaration) {
+    if (currentDeclaration.locked) return false;
+    const currentCount = currentDeclaration.declarationCount || currentDeclaration.cards.length;
+    if (cards.length <= currentCount) return false;
+  }
+  return true;
+}
+
+export function checkTripleLockIn(hands, trumpNumber) {
+  // Count trump numbers by suit across all hands that have been removed (played)
+  // This is called after dealing to check declarations
+  return null; // handled in App.js via declaration tracking
+}
+
+export function getTrumpSuitFromDeclaration(declCards) {
+  if (!declCards || declCards.length === 0) return null;
+  if (declCards.every(c => c.suit === 'JOKER')) return null; // no trump suit
+  return declCards[0].suit;
+}
+
+// ── Follow-suit enforcement ───────────────────────────────────────────────────
+
+// Get all cards of the lead suit from a hand
+function getSuitCards(hand, leadSuit, trumpSuit, trumpNumber) {
+  if (leadSuit === 'TRUMP') {
+    return hand.filter(c => isTrump(c, trumpSuit, trumpNumber));
+  }
+  return hand.filter(c => !isTrump(c, trumpSuit, trumpNumber) && c.suit === leadSuit);
+}
+
+// Count how many distinct groups of exactly `size` or more exist
+function countGroups(cards, minSize, trumpSuit, trumpNumber) {
+  const groups = {};
+  for (const card of cards) {
+    const key = cardKey(card, trumpSuit, trumpNumber);
+    groups[key] = (groups[key] || 0) + 1;
+  }
+  return Object.values(groups).filter(count => count >= minSize).length;
+}
+
+// Check if cards contain a tractor of given group size (2=pair tractor, 3=triple tractor)
+function hasTractor(cards, groupSize, leadSuit, trumpSuit, trumpNumber) {
+  const groups = {};
+  for (const card of cards) {
+    const key = cardKey(card, trumpSuit, trumpNumber);
+    groups[key] = (groups[key] || 0) + 1;
+  }
+  const eligibleKeys = Object.keys(groups).filter(k => groups[k] >= groupSize);
+  if (eligibleKeys.length < 2) return false;
+
+  if (leadSuit === 'TRUMP') {
+    const order = getTrumpOrder(trumpSuit, trumpNumber);
+    const positions = eligibleKeys.map(k => order.indexOf(k)).filter(p => p !== -1).sort((a, b) => a - b);
+    for (let i = 1; i < positions.length; i++) {
+      if (positions[i] === positions[i - 1] + 1) return true;
+    }
+  } else {
+    const ranks = eligibleKeys.map(k => {
+      const parts = k.split('_');
+      return RANKS.indexOf(parts[parts.length - 1]);
+    }).filter(r => r !== -1).sort((a, b) => a - b);
+    for (let i = 1; i < ranks.length; i++) {
+      if (ranks[i] === ranks[i - 1] + 1) return true;
+    }
+  }
+  return false;
+}
+
+// Check played cards contain a tractor of given group size
+function playedHasTractor(cards, groupSize, trumpSuit, trumpNumber) {
+  const result = detectTractor(cards, trumpSuit, trumpNumber);
+  if (!result) return false;
+  if (groupSize === 3) return result.type === 'triple_tractor';
+  if (groupSize === 2) return result.type === 'pair_tractor' || result.type === 'triple_tractor';
+  return false;
+}
+
+// Returns error string if play is illegal, or null if legal
+export function validateFollow(playedCards, hand, leadCombo, trumpSuit, trumpNumber) {
+  const n = leadCombo.cards.length;
+  if (playedCards.length !== n) return `Must play exactly ${n} cards`;
+
+  const leadSuit = getLeadSuit(leadCombo.cards, trumpSuit, trumpNumber);
+
+  // All suit cards available in hand (before this play)
+  const suitInHand = getSuitCards(hand, leadSuit, trumpSuit, trumpNumber);
+
+  // If no suit cards at all, anything goes
+  if (suitInHand.length === 0) return null;
+
+  // Cards actually played that match the lead suit
+  const playedInSuit = getSuitCards(playedCards, leadSuit, trumpSuit, trumpNumber);
+
+  // Must use as many suit cards as possible
+  const requiredSuitCards = Math.min(suitInHand.length, n);
+  if (playedInSuit.length < requiredSuitCards) {
+    return `Must play more ${leadSuit === 'TRUMP' ? 'trump' : leadSuit} cards — you have ${suitInHand.length}`;
+  }
+
+  const type = leadCombo.type;
+
+  // ── Pair ──────────────────────────────────────────────────────────────────
+  if (type === 'pair') {
+    const handPairs = countGroups(suitInHand, 2, trumpSuit, trumpNumber);
+    if (handPairs > 0) {
+      const playedPairs = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
+      if (playedPairs === 0) return `You have a pair in this suit — must play it`;
+    }
+    return null;
+  }
+
+  // ── Triple ────────────────────────────────────────────────────────────────
+  if (type === 'triple') {
+    const handTriples = countGroups(suitInHand, 3, trumpSuit, trumpNumber);
+    const handPairs   = countGroups(suitInHand, 2, trumpSuit, trumpNumber);
+    const playedTriples = countGroups(playedInSuit, 3, trumpSuit, trumpNumber);
+    const playedPairs   = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
+
+    if (handTriples > 0 && playedTriples === 0) return `You have a triple — must play it first`;
+    if (handTriples === 0 && handPairs > 0 && playedPairs === 0) return `You have a pair — must play it`;
+    return null;
+  }
+
+  // ── Pair tractor ──────────────────────────────────────────────────────────
+  if (type === 'pair_tractor') {
+    // Priority: pair tractor → 2 pairs → 1 pair → singles (NO triples required)
+    const handHasPairTractor = hasTractor(suitInHand, 2, leadSuit, trumpSuit, trumpNumber);
+    const handPairs = countGroups(suitInHand, 2, trumpSuit, trumpNumber);
+    const playedPairTractor = playedHasTractor(playedInSuit, 2, trumpSuit, trumpNumber);
+    const playedPairs = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
+
+    if (handHasPairTractor && !playedPairTractor) return `You have a pair tractor — must play it`;
+    if (!handHasPairTractor && handPairs >= 2 && playedPairs < 2) return `You have 2 pairs — must play both`;
+    if (!handHasPairTractor && handPairs === 1 && playedPairs < 1) return `You have a pair — must play it`;
+    return null;
+  }
+
+  // ── Triple tractor ────────────────────────────────────────────────────────
+  if (type === 'triple_tractor') {
+    // Priority: triple tractor → (pair tractor OR triple, player's choice) → 2+ pairs → 1 pair → singles
+    const handHasTripleTractor = hasTractor(suitInHand, 3, leadSuit, trumpSuit, trumpNumber);
+    const handHasPairTractor   = hasTractor(suitInHand, 2, leadSuit, trumpSuit, trumpNumber);
+    const handTriples = countGroups(suitInHand, 3, trumpSuit, trumpNumber);
+    const handPairs   = countGroups(suitInHand, 2, trumpSuit, trumpNumber);
+
+    const playedTripleTractor = playedHasTractor(playedInSuit, 3, trumpSuit, trumpNumber);
+    const playedPairTractor   = playedHasTractor(playedInSuit, 2, trumpSuit, trumpNumber);
+    const playedTriples = countGroups(playedInSuit, 3, trumpSuit, trumpNumber);
+    const playedPairs   = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
+
+    if (handHasTripleTractor && !playedTripleTractor) return `You have a triple tractor — must play it`;
+
+    if (!handHasTripleTractor && (handHasPairTractor || handTriples > 0)) {
+      // Player must play a pair tractor OR a triple (their choice)
+      if (!playedPairTractor && playedTriples === 0) {
+        return `You have a pair tractor or triple — must play one of them`;
       }
+    }
+
+    if (!handHasTripleTractor && !handHasPairTractor && handTriples === 0) {
+      // Fall through to pairs
+      if (handPairs >= 2 && playedPairs < 2) return `You have 2+ pairs — must play them`;
+      if (handPairs === 1 && playedPairs < 1) return `You have a pair — must play it`;
+    }
+    return null;
+  }
+
+  return null;
+}
+
+// ── Combo decomposition & auto-challenge ─────────────────────────────────────
+
+const TIER = { single: 0, pair: 1, triple: 2, pair_tractor: 3, triple_tractor: 4 };
+
+// Return rank index of a card key within a suit (for consecutive checking)
+function keyRankIdx(key, leadSuit, trumpSuit, trumpNumber) {
+  if (leadSuit === 'TRUMP') {
+    const order = getTrumpOrder(trumpSuit, trumpNumber);
+    return order.indexOf(key);
+  }
+  const parts = key.split('_');
+  return RANKS.indexOf(parts[parts.length - 1]);
+}
+
+// Given an array of [key, count] entries (sorted by rank), find all maximal
+// consecutive runs of length >= 2 where every key has count >= minSize.
+function findTractors(sortedEntries, minSize, leadSuit, trumpSuit, trumpNumber) {
+  // Returns array of arrays of keys that form tractors
+  const eligible = sortedEntries.filter(([k, cnt]) => cnt >= minSize);
+  if (eligible.length < 2) return [];
+
+  const tractors = [];
+  let run = [eligible[0]];
+  for (let i = 1; i < eligible.length; i++) {
+    const prevIdx = keyRankIdx(eligible[i-1][0], leadSuit, trumpSuit, trumpNumber);
+    const currIdx = keyRankIdx(eligible[i][0], leadSuit, trumpSuit, trumpNumber);
+    if (currIdx === prevIdx + 1) {
+      run.push(eligible[i]);
     } else {
-      setRestoring(false);
+      if (run.length >= 2) tractors.push(run.map(([k]) => k));
+      run = [eligible[i]];
     }
-  }, []);
+  }
+  if (run.length >= 2) tractors.push(run.map(([k]) => k));
+  return tractors;
+}
 
-  // Game state (from room.game)
-  const game = room?.game;
-  const mySeat = room?.players?.find(p => p.id === playerId)?.seat ?? -1;
-  const myHand = game?.hands?.[mySeat] ?? [];
-  const myTeam = mySeat % 2; // 0 = team A (seats 0,2), 1 = team B (seats 1,3)
+// Decompose cards into sub-components with max-min tier optimization.
+// Returns array of { type, cards } sorted highest tier first.
+export function decomposeCombo(cards, trumpSuit, trumpNumber) {
+  if (!cards || cards.length === 0) return [];
+  // Group cards by key
+  const groups = {};
+  for (const card of cards) {
+    const key = cardKey(card, trumpSuit, trumpNumber);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(card);
+  }
 
-  // ── Supabase subscription ────────────────────────────────────────────────
-  useEffect(() => {
-    if (!room) return;
-    if (subRef.current) subRef.current.unsubscribe();
-    subRef.current = subscribeToRoom(room.id, (updated) => {
-      setRoom(updated);
-      if (updated.state === 'game' && updated.game) setScreen('game');
-    });
-    return () => { if (subRef.current) subRef.current.unsubscribe(); };
-  }, [room?.id]);
+  const leadSuit = getLeadSuit(cards, trumpSuit, trumpNumber);
 
-  // ── Actions ──────────────────────────────────────────────────────────────
-  const handleCreate = async () => {
-    if (!playerName.trim()) return setError('Enter your name');
-    setLoading(true); setError('');
-    try {
-      const { room: r, playerId: pid } = await createRoom(playerName.trim());
-      setRoom(r); setPlayerId(pid); setScreen('lobby');
-      localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
-    } catch (e) { setError(e.message); }
-    setLoading(false);
-  };
-
-  const handleJoin = async () => {
-    if (!playerName.trim()) return setError('Enter your name');
-    if (!joinCode.trim()) return setError('Enter room code');
-    setLoading(true); setError('');
-    try {
-      const { room: r, playerId: pid } = await joinRoom(joinCode, playerName.trim());
-      setRoom(r); setPlayerId(pid); setScreen('lobby');
-      localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
-    } catch (e) { setError(e.message); }
-    setLoading(false);
-  };
-
-  const handleStartGame = async () => {
-    const decks = buildDecks();
-    const { sequence, kitty } = dealCardsSequential(decks);
-    const initialGame = {
-      phase: 'dealing',
-      hands: [[], [], [], []],
-      dealSequence: sequence,   // full sequence of {seat, card}
-      dealIndex: 0,             // how many cards have been dealt so far
-      dealComplete: false,
-      trumpConfirmed: [],   // seats who confirmed they pass on declaring
-      kitty,
-      kittyHolder: null,          // set after dealing: trump declarer (round 1) or first-card seat
-      trumpDeclaration: null,
-      trumpSuit: null,
-      trumpNumber: LEVELS[0],
-      firstCardSuit: sequence[0]?.card?.suit || '♠', // fallback trump
-      firstCardSeat: sequence[0]?.seat ?? 0,          // who gets dealt first
-      currentTrick: [],
-      tricks: [],
-      scores: [0, 0],
-      levels: [0, 0],
-      attackingTeam: 0,
-      currentTurn: 0,
-      selectedCards: [[], [], [], []],
-      log: ['Dealing cards...'],
-      roundNum: 1,
-    };
-    await updateRoom(room.id, { state: 'game', game: initialGame });
-  };
-
-  // ── Game Actions ─────────────────────────────────────────────────────────
-  const [selectedIds, setSelectedIds] = useState([]);
-  const dealTimerRef = useRef(null);
-
-  // ── Auto-deal animation ──────────────────────────────────────────────────
-  // ── Trick end delay — host waits 2s then resolves ──────────────────────────
-  useEffect(() => {
-    if (!game || game.phase !== 'trick_end' || mySeat !== 0) return;
-    const timer = setTimeout(async () => {
-      const winner = game.trickEndWinner;
-      const log = game.trickEndLog || game.log;
-      const newHands = game.hands;
-      const newTricks = game.tricks || [];
-      const newScores = game.scores;
-      const totalCards = newHands.reduce((s, h) => s + h.length, 0);
-
-      if (totalCards === 0) {
-        const kittyPts = countPoints(game.kitty || []);
-        const lastWinnerTeam = winner % 2;
-        const mult = kittyMultiplier(
-          (newTricks[newTricks.length - 1]?.plays || []).flatMap(p => p.cards),
-          game.trumpSuit, game.trumpNumber
-        );
-        const finalScores = [...newScores];
-        finalScores[lastWinnerTeam] += kittyPts * mult;
-        const defScore = finalScores[1 - game.attackingTeam];
-        const atkGain = attackerLevelGain(defScore);
-        const defGain = defenderLevelGain(defScore);
-        await updateRoom(room.id, { game: { ...game, currentTrick: [], scores: finalScores,
-          phase: 'round_end',
-          roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
-          log: [...log, `Round over! Defenders scored ${defScore} pts.`] } });
-      } else {
-        await updateRoom(room.id, { game: { ...game, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [game?.phase, game?.trickEndWinner]);
-
-    useEffect(() => {
-    if (!game || game.phase !== 'dealing' || game.dealComplete) return;
-
-    // Check if all players confirmed pass mid-deal — resolve immediately
-    if (!game.trumpSuit) {
-      const midConfirmed = game.trumpConfirmed || [];
-      if (midConfirmed.length >= 4) {
-        if (mySeat === 0) {
-          const trumpNum = game.trumpNumber;
-          let resolvedSuit = null;
-          for (const card of (game.kitty || [])) {
-            if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
-          }
-          if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
-          const kittyHolder = game.firstCardSeat ?? 0;
-          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-            log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
-        }
-        return;
-      }
-    }
-
-    if (game.dealIndex >= (game.dealSequence?.length || 0)) {
-      // All cards dealt
-      if (game.trumpSuit) {
-        // Trump already declared — just finalize
-        if (mySeat === 0) {
-          const kittyHolder = game.roundNum === 1
-            ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
-            : (game.firstCardSeat ?? 0);
-          updateRoom(room.id, { game: { ...game, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
-        }
-      } else {
-        // No trump declared yet — wait for all 4 players to confirm they pass
-        const confirmed = game.trumpConfirmed || [];
-        if (confirmed.length >= 4) {
-          // All confirmed — stop dealing and auto-resolve from kitty/first card
-          if (mySeat === 0) {
-            const trumpNum = game.trumpNumber;
-            let resolvedSuit = null;
-            for (const card of (game.kitty || [])) {
-              if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
-            }
-            if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
-            const kittyHolder = game.firstCardSeat ?? 0;
-            updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-              log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
-          }
-          return; // stop the deal timer
-        }
-        // else: waiting for players to confirm — UI handles this
-      }
-      return;
-    }
-
-    // Only host drives the deal timer to avoid race conditions
-    if (mySeat !== 0) return;
-
-    dealTimerRef.current = setTimeout(async () => {
-      const seq = game.dealSequence;
-      const idx = game.dealIndex;
-      const { seat, card } = seq[idx];
-      const newHands = game.hands.map((h, i) => i === seat ? [...h, card] : h);
-      await updateRoom(room.id, { game: { ...game, hands: newHands, dealIndex: idx + 1 } });
-    }, 250);
-
-    return () => clearTimeout(dealTimerRef.current);
-  }, [game?.dealIndex, game?.phase, game?.dealComplete]);
-
-  const toggleCard = (cardId) => {
-    setSelectedIds(prev =>
-      prev.includes(cardId) ? prev.filter(id => id !== cardId) : [...prev, cardId]
-    );
-  };
-
-  const selectedCards = myHand.filter(c => selectedIds.includes(c.id));
-
-  const handleKick = async (kickedId) => {
-    if (!room || room.host_id !== playerId) return;
-    const updated = room.players.filter(p => p.id !== kickedId);
-    await updateRoom(room.id, { players: updated });
-  };
-
-  const handleClaimSeat = async (seat) => {
-    if (!room) return;
-    // Only claim if seat is free and I have no seat
-    if (room.players.find(p => p.seat === seat)) return;
-    const me = room.players.find(p => p.id === playerId);
-    if (me?.seat !== -1 && me?.seat !== undefined) return; // already seated
-    const updated = room.players.map(p =>
-      p.id === playerId ? { ...p, seat } : p
-    );
-    await updateRoom(room.id, { players: updated });
-  };
-
-  const handleLeaveSeat = async () => {
-    if (!room) return;
-    const updated = room.players.map(p =>
-      p.id === playerId ? { ...p, seat: -1 } : p
-    );
-    await updateRoom(room.id, { players: updated });
-  };
-
-
-  const handleLeave = async () => {
-    if (!room) return;
-    // Remove self from players
-    const updated = room.players.filter(p => p.id !== playerId);
-    // If host is leaving, transfer host to next player (or delete room if empty)
-    let updates = { players: updated };
-    if (room.host_id === playerId && updated.length > 0) {
-      updates.host_id = updated[0].id;
-    }
-    try {
-      if (updated.length === 0) {
-        // Last player — just clear the room state
-        await updateRoom(room.id, { state: 'lobby', players: [], game: null, ...updates });
-      } else {
-        await updateRoom(room.id, updates);
-      }
-    } catch (e) { /* ignore */ }
-    localStorage.removeItem('shengji_session');
-    setRoom(null);
-    setPlayerId(null);
-    setScreen('home');
-  };
-
-
-  const handleDeclareTrump = async () => {
-    if (!game || selectedCards.length === 0) return;
-
-    const allJokers = selectedCards.every(c => c.suit === 'JOKER');
-    const existingDecl = game.trumpDeclaration;
-    const newSuit = getTrumpSuitFromDeclaration(selectedCards);
-    const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
-
-    // REINFORCEMENT: same player adds more same-suit trump numbers
-    const isReinforcement = existingDecl &&
-      existingDecl.playerIdx === mySeat &&
-      !allJokers &&
-      !existingDecl.locked &&
-      newSuit === game.trumpSuit &&
-      selectedCards.every(c => c.rank === game.trumpNumber && c.suit === newSuit);
-
-    if (isReinforcement) {
-      const newCount = (existingDecl.declarationCount || existingDecl.cards.length) + selectedCards.length;
-      const isLocked = newCount >= 3;
-      const logMsg = isLocked
-        ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${game.trumpNumber}s — locked!)`
-        : `${declName} reinforces ${newSuit} trump (${newCount} cards now — needs ${newCount + 1} to override).`;
-      await updateRoom(room.id, { game: {
-        ...game,
-        trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
-        log: [...(game.log || []), logMsg],
-      }});
-      setSelectedIds([]);
-      return;
-    }
-
-    // Fresh declaration or override
-    // If I was overridden (I'm not the current declarer) and picking a DIFFERENT suit,
-    // treat as a fresh declaration — I just need valid cards, not to beat the count
-    const wasOverridden = existingDecl && existingDecl.playerIdx !== mySeat;
-    const declaringDifferentSuit = newSuit !== game.trumpSuit;
-    const declCheckDecl = (wasOverridden && declaringDifferentSuit) ? null : existingDecl;
-    if (!canDeclareTrump(selectedCards, declCheckDecl, game.trumpNumber)) {
-      return setError(`Select trump number cards (${game.trumpNumber}) or 2+ jokers to declare`);
-    }
-    const isLocked = !allJokers && selectedCards.length >= 3;
-    const logMsg = isLocked
-      ? `${declName} locks in ${newSuit} as trump with 3 ${game.trumpNumber}s!`
-      : `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'}.`;
-    await updateRoom(room.id, { game: {
-      ...game,
-      trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
-      trumpSuit: newSuit,
-      log: [...(game.log || []), logMsg],
-    }});
-    setSelectedIds([]);
-  };
-
-  const handleConfirmPass = async () => {
-    if (!game) return;
-    const confirmed = game.trumpConfirmed || [];
-    if (confirmed.includes(mySeat)) return; // already confirmed
-    await updateRoom(room.id, { game: { ...game, trumpConfirmed: [...confirmed, mySeat] } });
-  };
-
-  const handleTakeKitty = async () => {
-    if (mySeat !== game.kittyHolder) return;
-    const newHand = [...myHand, ...game.kitty];
-    const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    await updateRoom(room.id, { game: { ...game, phase: 'kitty', hands: newHands, kitty: [] } });
-  };
-
-  const handleDiscardKitty = async () => {
-    if (mySeat !== game.kittyHolder) return;
-    if (selectedCards.length !== 6) return setError('Select exactly 6 cards to discard');
-    const newHand = myHand.filter(c => !selectedIds.includes(c.id));
-    const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    await updateRoom(room.id, {
-      game: { ...game, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: game.kittyHolder, log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
-    });
-    setSelectedIds([]);
-  };
-
-  const handlePlayCards = async () => {
-    if (game.currentTurn !== mySeat) return setError("Not your turn");
-    if (selectedCards.length === 0) return setError('Select cards to play');
-
-    const combo = detectCombo(selectedCards, game.trumpSuit, game.trumpNumber);
-    if (!combo.valid) return setError('Invalid combo');
-
-    const isLeading = game.currentTrick.length === 0;
-
-    if (!isLeading) {
-      const leadPlay = game.currentTrick[0];
-      const leadCombo = detectCombo(leadPlay.cards, game.trumpSuit, game.trumpNumber);
-      const followErr = validateFollow(selectedCards, myHand, { ...leadCombo, cards: leadPlay.cards }, game.trumpSuit, game.trumpNumber);
-      if (followErr) return setError(followErr);
-    }
-
-    // If leading with multiple cards, auto-detect if anyone must challenge
-    if (isLeading && selectedCards.length > 1) {
-      const newHand = myHand.filter(c => !selectedIds.includes(c.id));
-      const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-      // Check counterclockwise for a forced challenger
-      const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
-      if (challengeResult) {
-        const { challengerSeat, components } = challengeResult;
-        await updateRoom(room.id, {
-          game: {
-            ...game,
-            hands: newHands,
-            phase: 'challenge',
-            challenge: {
-              leaderSeat: mySeat,
-              leaderName: room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`,
-              playedCards: selectedCards,
-              components,
-              challengerSeat,
-            },
-            log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} leads ${selectedCards.length} cards — ${room.players.find(p => p.seat === challengerSeat)?.name} must challenge!`],
-          }
-        });
-        setSelectedIds([]);
-        return;
-      }
-      // Nobody can challenge — commit play directly
-    }
-
-    await commitPlay(selectedCards, isLeading);
-  };
-
-  // Challenger picks which sub-combo the leader must keep
-  const handleChallenge = async (keptCombo) => {
-    if (!game.challenge) return;
-    if (game.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
-    if (keptCombo.length === 0) return setError("Select which cards the leader must keep");
-
-    const { leaderSeat, playedCards } = game.challenge;
-    const keptIds = new Set(keptCombo.map(c => c.id));
-    const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
-    const leaderHand = [...(game.hands[leaderSeat] || []), ...returnedCards];
-    const newHands = game.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
-
-    await updateRoom(room.id, {
-      game: {
-        ...game,
-        hands: newHands,
-        phase: 'playing',
-        challenge: null,
-        currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players.find(p => p.seat === leaderSeat).name }],
-        currentTurn: (leaderSeat + 1) % 4,
-        log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
-      }
-    });
-    setSelectedIds([]);
-  };
-
-  const handlePassChallenge = async () => {}; // kept for compatibility, not used
-
-  const commitPlay = async (cards, isLeading) => {
-    const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
-    const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    const newTrick = [...(game.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
-
-    let newGame = { ...game, hands: newHands, currentTrick: newTrick };
-
-    if (newTrick.length === 4) {
-      const winner = trickWinner(newTrick, game.trumpSuit, game.trumpNumber);
-      const trickPoints = newTrick.flatMap(p => p.cards).reduce((s, c) => s + cardPoints(c), 0);
-      const winnerTeam = winner % 2;
-      const newScores = [...game.scores];
-      newScores[winnerTeam] += trickPoints;
-      const newTricks = [...(game.tricks || []), { plays: newTrick, winner, points: trickPoints }];
-      const log = [...(game.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
-      // Show completed trick for 2 seconds before clearing (host drives timer)
-      newGame = { ...newGame, hands: newHands, currentTrick: newTrick, tricks: newTricks,
-        scores: newScores, phase: 'trick_end', trickEndWinner: winner, trickEndLog: log, log };
-    } else {
-      newGame.currentTurn = (mySeat + 1) % 4;
-    }
-
-    await updateRoom(room.id, { game: newGame });
-    setSelectedIds([]);
-  };
-
-
-  const handleNextRound = async () => {
-    const r = game.roundResult;
-    const newLevels = [...game.levels];
-    const newAttacking = r.defScore >= 120
-      ? 1 - game.attackingTeam  // defenders win, switch
-      : game.attackingTeam;
-
-    if (r.defScore >= 120) {
-      newLevels[1 - game.attackingTeam] = Math.max(0, (newLevels[1 - game.attackingTeam] || 0) + Math.max(0, r.defGain));
-    } else {
-      newLevels[game.attackingTeam] = Math.min(12, (newLevels[game.attackingTeam] || 0) + r.atkGain);
-    }
-
-    // Check win
-    if (newLevels[0] > 12 || newLevels[1] > 12) {
-      await updateRoom(room.id, { game: { ...game, phase: 'game_over', levels: newLevels } });
-      return;
-    }
-
-    const decks = buildDecks();
-    const { sequence, kitty } = dealCardsSequential(decks);
-    // For round 2+, kittyHolder is whoever gets dealt the first card (resolved after dealing)
-    const firstCardSeat = sequence[0]?.seat ?? 0;
-
-    await updateRoom(room.id, {
-      game: {
-        ...game,
-        phase: 'dealing',
-        hands: [[], [], [], []],
-        dealSequence: sequence,
-        dealIndex: 0,
-        dealComplete: false,
-        trumpConfirmed: [],
-        firstCardSuit: sequence[0]?.card?.suit || '♠',
-        firstCardSeat,
-        kitty,
-        kittyHolder: null,           // resolved after dealing completes
-        trumpDeclaration: null,
-        trumpSuit: null,
-        trumpNumber: LEVELS[newLevels[newAttacking]],
-        currentTrick: [],
-        tricks: [],
-        scores: [0, 0],
-        levels: newLevels,
-        attackingTeam: newAttacking,
-        currentTurn: firstCardSeat,
-        selectedCards: [[], [], [], []],
-        log: [`Round ${game.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
-        roundNum: (game.roundNum || 1) + 1,
-        roundResult: null,
-      }
-    });
-  };
-
-  // ── Sort hand ────────────────────────────────────────────────────────────
-  const SUIT_ORDER = ['♠', '♥', '♣', '♦'];
-  const sortedHand = [...myHand].sort((a, b) => {
-    if (!game) return 0;
-    const aTrump = isTrump(a, game.trumpSuit, game.trumpNumber);
-    const bTrump = isTrump(b, game.trumpSuit, game.trumpNumber);
-    if (!aTrump && !bTrump) {
-      const sd = SUIT_ORDER.indexOf(a.suit) - SUIT_ORDER.indexOf(b.suit);
-      if (sd !== 0) return sd;
-      return suitRank(a) - suitRank(b);
-    }
-    if (!aTrump && bTrump) return -1;
-    if (aTrump && !bTrump) return 1;
-    return trumpRank(a, game.trumpSuit, game.trumpNumber) - trumpRank(b, game.trumpSuit, game.trumpNumber);
+  // Sort keys by rank
+  const sortedEntries = Object.entries(groups).sort(([ka], [kb]) => {
+    return keyRankIdx(ka, leadSuit, trumpSuit, trumpNumber) - keyRankIdx(kb, leadSuit, trumpSuit, trumpNumber);
   });
 
-  // ── Render ───────────────────────────────────────────────────────────────
-  return (
-    <ErrorBoundary>
-    <div style={S.app}>
-      <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" />
+  const components = [];
+  const remaining = {}; // key -> cards left to assign
+  for (const [k, arr] of sortedEntries) remaining[k] = [...arr];
 
-      {/* Header */}
-      <div style={S.title}>升级</div>
-      <div style={S.subtitle}>Sheng Ji · 3 Decks</div>
+  const countRemaining = (k) => (remaining[k] || []).length;
+  const takeCards = (key, n) => {
+    const taken = remaining[key].splice(0, n);
+    return taken;
+  };
 
-      {restoring && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
-          <div style={{ color: GOLD, fontSize: '14px', letterSpacing: '0.1em' }}>Reconnecting...</div>
-        </div>
-      )}
-      {!restoring && screen === 'home' && (
-        <div style={S.card}>
-          <div style={S.section}>
-            <label style={S.label}>Your Name</label>
-            <input style={S.input} placeholder="Enter your name" value={playerName} onChange={e => setPlayerName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreate()} />
-          </div>
-          {error && <div style={S.error}>{error}</div>}
-          <button style={S.btn(GOLD)} onClick={handleCreate} disabled={loading}>
-            {loading ? '...' : '+ Create Room'}
-          </button>
-          <div style={{ ...S.section, marginTop: '20px' }}>
-            <label style={S.label}>Join with Code</label>
-            <input style={S.input} placeholder="4-letter code" value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} maxLength={4} />
-            <button style={S.btn('#3a4a6b')} onClick={handleJoin} disabled={loading}>
-              {loading ? '...' : '→ Join Room'}
-            </button>
-          </div>
-        </div>
-      )}
+  // Helper: get sorted entries of what remains
+  const getSortedRemaining = () =>
+    sortedEntries.map(([k]) => k).filter(k => countRemaining(k) > 0)
+      .map(k => [k, countRemaining(k)]);
 
-      {!restoring && screen === 'lobby' && room && (
-        <LobbyScreen room={room} playerId={playerId} onStart={handleStartGame} onKick={handleKick} onClaimSeat={handleClaimSeat} onLeaveSeat={handleLeaveSeat} onLeave={handleLeave} />
-      )}
+  // 1. Greedily assign triple tractors first
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const rem = getSortedRemaining();
+    const tractors = findTractors(rem, 3, leadSuit, trumpSuit, trumpNumber);
+    if (tractors.length > 0) {
+      // Take longest triple tractor
+      const best = tractors.sort((a, b) => b.length - a.length)[0];
+      const tractorCards = [];
+      for (const k of best) tractorCards.push(...takeCards(k, 3));
+      components.push({ type: 'triple_tractor', cards: tractorCards });
+      changed = true;
+    }
+  }
 
-      {!restoring && screen === 'game' && game && (
-        <GameScreen
-          game={game} room={room} mySeat={mySeat} myTeam={myTeam}
-          sortedHand={sortedHand} selectedIds={selectedIds} toggleCard={toggleCard}
-          selectedCards={selectedCards} error={error} setError={setError}
-          onDeclareTrump={handleDeclareTrump} onTakeKitty={handleTakeKitty}
-          onDiscardKitty={handleDiscardKitty} onPlayCards={handlePlayCards}
-          onNextRound={handleNextRound} playerId={playerId}
-          onChallenge={handleChallenge} onConfirmPass={handleConfirmPass} onLeave={handleLeave}
-        />
-      )}
-    </div>
-    </ErrorBoundary>
-  );
+  // 2. Now decide: should we prefer triples or pair tractors?
+  // We want to maximize min tier. Try both and pick the one with higher min tier.
+  // Strategy: pair tractors and triples compete. Use a greedy approach —
+  // assign pair tractors first (tier 3) then triples (tier 2), and check
+  // if swapping improves the min tier.
+
+  // Snapshot remaining for backtracking
+  const snapRemaining = () => {
+    const snap = {};
+    for (const k of Object.keys(remaining)) snap[k] = [...remaining[k]];
+    return snap;
+  };
+  const restoreRemaining = (snap) => {
+    for (const k of Object.keys(remaining)) remaining[k] = [];
+    for (const [k, arr] of Object.entries(snap)) remaining[k] = [...arr];
+  };
+
+  // Try option A: pair tractors before triples
+  const snapA = snapRemaining();
+  const compA = [];
+  changed = true;
+  while (changed) {
+    changed = false;
+    const rem = getSortedRemaining();
+    const tractors = findTractors(rem, 2, leadSuit, trumpSuit, trumpNumber);
+    if (tractors.length > 0) {
+      const best = tractors.sort((a, b) => b.length - a.length)[0];
+      const tractorCards = [];
+      for (const k of best) tractorCards.push(...takeCards(k, 2));
+      compA.push({ type: 'pair_tractor', cards: tractorCards });
+      changed = true;
+    }
+  }
+  // then triples
+  for (const [k, cnt] of getSortedRemaining()) {
+    while (countRemaining(k) >= 3) {
+      compA.push({ type: 'triple', cards: takeCards(k, 3) });
+    }
+  }
+  // then pairs
+  for (const [k, cnt] of getSortedRemaining()) {
+    while (countRemaining(k) >= 2) {
+      compA.push({ type: 'pair', cards: takeCards(k, 2) });
+    }
+  }
+  // then singles
+  for (const [k] of getSortedRemaining()) {
+    while (countRemaining(k) >= 1) {
+      compA.push({ type: 'single', cards: takeCards(k, 1) });
+    }
+  }
+  const minTierA = compA.length ? Math.min(...compA.map(c => TIER[c.type])) : 0;
+
+  // Try option B: triples before pair tractors
+  restoreRemaining(snapA);
+  const compB = [];
+  for (const [k] of getSortedRemaining()) {
+    while (countRemaining(k) >= 3) {
+      compB.push({ type: 'triple', cards: takeCards(k, 3) });
+    }
+  }
+  changed = true;
+  while (changed) {
+    changed = false;
+    const rem = getSortedRemaining();
+    const tractors = findTractors(rem, 2, leadSuit, trumpSuit, trumpNumber);
+    if (tractors.length > 0) {
+      const best = tractors.sort((a, b) => b.length - a.length)[0];
+      const tractorCards = [];
+      for (const k of best) tractorCards.push(...takeCards(k, 2));
+      compB.push({ type: 'pair_tractor', cards: tractorCards });
+      changed = true;
+    }
+  }
+  for (const [k] of getSortedRemaining()) {
+    while (countRemaining(k) >= 2) {
+      compB.push({ type: 'pair', cards: takeCards(k, 2) });
+    }
+  }
+  for (const [k] of getSortedRemaining()) {
+    while (countRemaining(k) >= 1) {
+      compB.push({ type: 'single', cards: takeCards(k, 1) });
+    }
+  }
+  const minTierB = compB.length ? Math.min(...compB.map(c => TIER[c.type])) : 0;
+
+  // Pick whichever decomposition has the higher minimum tier
+  const chosen = minTierA >= minTierB ? compA : compB;
+  return [...components, ...chosen].sort((a, b) => TIER[b.type] - TIER[a.type]);
 }
 
-// ── Game Screen ───────────────────────────────────────────────────────────────
-function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onConfirmPass, onLeave }) {
-  const [selectedCompIdx, setSelectedCompIdx] = useState(null);
-  const phase = game?.phase;
-  const isMyTurn = game.currentTurn === mySeat && phase !== 'trick_end';
-  useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
+// Check if a hand can beat a specific sub-component of a big play.
+// For the challenge system: can this hand BEAT (not just match) the component?
+// Only considers beating within the SAME suit (or trump beating non-trump).
+// Does NOT trigger on "I have trump therefore I must challenge every non-trump single"
+// — that rule only applies to follow-suit enforcement, not challenges.
+function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
+  const { type, cards } = component;
+  const suit = getLeadSuit(cards, trumpSuit, trumpNumber);
+  const suitCards = getSuitCards(hand, suit, trumpSuit, trumpNumber);
 
-  const isKittyHolder = game.kittyHolder === mySeat;
-  const attackTeamName = `Team ${game.attackingTeam === 0 ? 'A' : 'B'}`;
-  const myTeamAttacking = myTeam === game.attackingTeam;
+  // Helper: get numeric rank of a card within its suit context
+  const cardRankVal = (card) =>
+    suit === 'TRUMP' || isTrump(card, trumpSuit, trumpNumber)
+      ? trumpRank(card, trumpSuit, trumpNumber)
+      : RANKS.indexOf(card.rank);
 
-  return (
-    <div style={{ width: '100%', maxWidth: '640px' }}>
-
-      {/* Scores & Info */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
-        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
-          <div style={{ ...S.label, marginBottom: '4px' }}>Team A Level</div>
-          <div style={{ fontSize: '22px', fontWeight: 900, color: game.attackingTeam === 0 ? GOLD : TEXT }}>
-            {LEVELS[game.levels[0]]}
-          </div>
-        </div>
-        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
-          <div style={{ ...S.label, marginBottom: '2px' }}>Trump</div>
-          <div style={{ fontSize: '18px', fontWeight: 700, color: GOLD }}>{game.trumpNumber}</div>
-          <div style={{ fontSize: '13px', color: game.trumpSuit ? RED : MUTED }}>{game.trumpSuit || 'No suit yet'}</div>
-        </div>
-        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
-          <div style={{ ...S.label, marginBottom: '4px' }}>Team B Level</div>
-          <div style={{ fontSize: '22px', fontWeight: 900, color: game.attackingTeam === 1 ? GOLD : TEXT }}>
-            {LEVELS[game.levels[1]]}
-          </div>
-        </div>
-      </div>
-
-      {/* Scores */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' }}>
-        {[0, 1].map(team => (
-          <div key={team} style={{ background: SURFACE, border: `1px solid ${team === myTeam ? GOLD + '44' : BORDER}`, borderRadius: '8px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: MUTED, fontSize: '12px' }}>Team {team === 0 ? 'A' : 'B'} {team === game.attackingTeam ? '⚔' : '🛡'}</span>
-            <span style={{ fontWeight: 700, color: team === game.attackingTeam ? GOLD : TEXT }}>{game.scores[team]} pts</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Players */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '6px', marginBottom: '12px' }}>
-        {room.players.map(p => (
-          <div key={p.id} style={{ ...S.playerSlot(game.currentTurn === p.seat, p.id === playerId), textAlign: 'center', padding: '6px 4px' }}>
-            <div style={{ fontSize: '11px', color: p.id === playerId ? GREEN : TEXT, fontWeight: p.id === playerId ? 700 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-            <div style={{ fontSize: '10px', color: MUTED }}>{game.hands[p.seat]?.length ?? 0} cards</div>
-            {game.currentTurn === p.seat && <div style={{ fontSize: '9px', color: GOLD }}>▶ TURN</div>}
-          </div>
-        ))}
-      </div>
-
-      {/* Current Trick */}
-      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
-        <div style={{ ...S.label, marginBottom: '8px' }}>Current Trick</div>
-        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          {game.currentTrick.length === 0 ? (
-            <div style={{ color: MUTED, fontSize: '13px', padding: '8px' }}>No cards played yet</div>
-          ) : (
-            game.currentTrick.map((play, i) => (
-              <div key={i} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '10px', color: MUTED, marginBottom: '4px' }}>{play.playerName}</div>
-                <div style={{ display: 'flex', gap: '2px' }}>
-                  {play.cards.map(c => <PlayingCard key={c.id} card={c} small />)}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Phase-specific actions */}
-      {game.phase === 'dealing' && (
-        <div style={{ background: SURFACE, border: `1px solid ${GOLD}44`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-          <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>
-            {game.dealComplete ? 'Dealing Complete — Declare Trump' : `Dealing Cards... (${game.dealIndex || 0}/${game.dealSequence?.length || 156})`}
-          </div>
-
-          {/* Progress bar */}
-          {!game.dealComplete && (
-            <div style={{ height: '4px', background: BORDER, borderRadius: '2px', marginBottom: '12px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', background: GOLD, borderRadius: '2px', width: `${((game.dealIndex || 0) / (game.dealSequence?.length || 156)) * 100}%`, transition: 'width 0.8s ease' }} />
-            </div>
-          )}
-
-          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
-            {game.trumpDeclaration
-              ? `${room.players.find(p => p.seat === game.trumpDeclaration.playerIdx)?.name} declared trump${game.trumpSuit ? ` (${game.trumpSuit})` : ' (no suit — jokers)'}. Someone can override with more cards.`
-              : 'Select 2+ cards of the same rank to declare trump. You can declare any time during dealing.'}
-          </div>
-
-          <button style={S.btn(selectedCards.length >= 1 ? GOLD : '#333')} onClick={onDeclareTrump}>
-            Declare Trump ({selectedCards.length} selected)
-          </button>
-
-          {/* Pass button — always visible during dealing if no trump declared */}
-          {!game.trumpSuit && (() => {
-            const confirmed = game.trumpConfirmed || [];
-            const iConfirmed = confirmed.includes(mySeat);
-            const waitingFor = [0,1,2,3].filter(s => !confirmed.includes(s)).map(s => room.players.find(p => p.seat === s)?.name).filter(Boolean);
-            return (
-              <div style={{ marginTop: '12px', padding: '12px', background: '#1a1200', border: `1px solid ${GOLD}44`, borderRadius: '8px' }}>
-                <div style={{ color: GOLD, fontWeight: 700, fontSize: '13px', marginBottom: '8px' }}>
-                  ⚠ Dealing complete — no trump declared yet
-                </div>
-                <div style={{ color: MUTED, fontSize: '12px', marginBottom: '10px' }}>
-                  If nobody declares, trump will be decided from the kitty. Confirm you're passing.
-                </div>
-                {!iConfirmed ? (
-                  <button style={S.btn(RED)} onClick={onConfirmPass}>
-                    I pass — decide trump from kitty
-                  </button>
-                ) : (
-                  <div style={{ color: GREEN, fontSize: '12px' }}>
-                    ✓ You passed. Waiting for: {waitingFor.join(', ') || 'everyone confirmed!'}
-                  </div>
-                )}
-                <div style={{ fontSize: '11px', color: MUTED, marginTop: '6px' }}>
-                  Confirmed: {confirmed.length}/4
-                </div>
-              </div>
-            );
-          })()}
-
-          {isKittyHolder && game.dealComplete && (
-            <button style={{ ...S.btn(GREEN), marginTop: '8px' }} onClick={onTakeKitty}>
-              Take Kitty →
-            </button>
-          )}
-          {!isKittyHolder && game.dealComplete && (
-            <div style={{ color: MUTED, fontSize: '12px', textAlign: 'center', marginTop: '8px' }}>
-              Waiting for {room.players.find(p => p.seat === game.kittyHolder)?.name} to take the kitty...
-            </div>
-          )}
-        </div>
-      )}
-
-      {game.phase === 'kitty' && isKittyHolder && (
-        <div style={{ background: SURFACE, border: `1px solid ${GOLD}44`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-          <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>Discard Kitty</div>
-          <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>Select exactly 6 cards to discard (they score for whoever wins the last trick)</div>
-          <button style={S.btn(selectedCards.length === 6 ? RED : '#444')} onClick={onDiscardKitty}>
-            Discard {selectedCards.length}/6 cards
-          </button>
-        </div>
-      )}
-
-      {game.phase === 'kitty' && !isKittyHolder && (
-        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px', textAlign: 'center', color: MUTED }}>
-          Waiting for {room.players.find(p => p.seat === game.kittyHolder)?.name} to discard kitty...
-        </div>
-      )}
-
-      {/* Challenge Phase — mandatory challenger picks which sub-combo leader keeps */}
-      {game.phase === 'challenge' && game.challenge && (() => {
-        const ch = game.challenge;
-        const isChallenger = ch.challengerSeat === mySeat;
-        const isLeader = ch.leaderSeat === mySeat;
-        const challName = room.players.find(p => p.seat === ch.challengerSeat)?.name;
-
-        const components = ch.components || [];
-
-        return (
-          <div style={{ background: SURFACE, border: `2px solid ${RED}66`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-            <div style={{ color: RED, fontWeight: 700, marginBottom: '8px' }}>
-              ⚔ Challenge — {challName} must pick which part of {ch.leaderName}'s play to keep
-            </div>
-
-            {/* Show decomposed sub-combos — challenger clicks one to keep */}
-            <div style={{ marginBottom: '12px' }}>
-              <div style={{ fontSize: '12px', color: MUTED, marginBottom: '8px' }}>
-                {ch.leaderName}'s play broken into components (select one to keep):
-              </div>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                {components.map((comp, i) => (
-                  <div
-                    key={i}
-                    onClick={isChallenger ? () => setSelectedCompIdx(i === selectedCompIdx ? null : i) : undefined}
-                    style={{
-                      border: `2px solid ${selectedCompIdx === i ? GOLD : '#555'}`,
-                      borderRadius: '8px', padding: '8px',
-                      background: selectedCompIdx === i ? '#2a2500' : SURFACE,
-                      cursor: isChallenger ? 'pointer' : 'default',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
-                    }}
-                  >
-                    <div style={{ fontSize: '10px', color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {comp.type.replace('_', ' ')}
-                    </div>
-                    <div style={{ display: 'flex', gap: '2px' }}>
-                      {comp.cards.map(c => <PlayingCard key={c.id} card={c} small />)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {isChallenger && (
-              <button
-                style={S.btn(selectedCompIdx !== null ? RED : '#444')}
-                onClick={() => selectedCompIdx !== null && onChallenge(components[selectedCompIdx].cards)}
-                disabled={selectedCompIdx === null}
-              >
-                {selectedCompIdx !== null
-                  ? `Force leader to keep only the ${components[selectedCompIdx].type.replace('_',' ')} (${components[selectedCompIdx].cards.length} cards)`
-                  : 'Select a sub-combo above to keep'}
-              </button>
-            )}
-
-            {!isChallenger && !isLeader && (
-              <div style={{ color: MUTED, fontSize: '13px', marginTop: '8px' }}>
-                Waiting for {challName} to pick which part to keep...
-              </div>
-            )}
-            {isLeader && (
-              <div style={{ color: MUTED, fontSize: '13px', marginTop: '8px' }}>
-                {challName} is choosing which component of your play to keep...
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {(phase === 'playing' || phase === 'trick_end') && (
-        <div style={{ background: SURFACE, border: `1px solid ${isMyTurn ? GOLD + '66' : BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
-          {isMyTurn ? (
-            <>
-              <div style={{ color: GOLD, fontWeight: 700, marginBottom: '8px' }}>Your Turn — Select cards to play</div>
-              <button style={S.btn(GOLD)} onClick={onPlayCards}>
-                Play {selectedCards.length} card{selectedCards.length !== 1 ? 's' : ''}
-              </button>
-            </>
-          ) : (
-            <div style={{ textAlign: 'center', color: MUTED }}>
-              Waiting for {room.players.find(p => p.seat === game.currentTurn)?.name}...
-            </div>
-          )}
-        </div>
-      )}
-
-      {game.phase === 'round_end' && game.roundResult && (
-        <div style={{ background: SURFACE, border: `1px solid ${GOLD}44`, borderRadius: '10px', padding: '20px', marginBottom: '12px', textAlign: 'center' }}>
-          <div style={{ fontSize: '20px', fontWeight: 900, color: GOLD, marginBottom: '12px' }}>Round Over!</div>
-          <div style={{ color: TEXT, marginBottom: '8px' }}>Defenders scored <strong>{game.roundResult.defScore}</strong> points</div>
-          <div style={{ color: TEXT, marginBottom: '8px' }}>Kitty: {game.roundResult.kittyPts} pts × {game.roundResult.kittyMult}x multiplier</div>
-          {game.roundResult.defScore >= 120
-            ? <div style={{ color: GREEN, fontWeight: 700, marginBottom: '12px' }}>Defenders win! +{Math.max(0, game.roundResult.defGain)} levels</div>
-            : <div style={{ color: GOLD, fontWeight: 700, marginBottom: '12px' }}>Attackers win! +{game.roundResult.atkGain} levels</div>
-          }
-          {mySeat === 0 && <button style={S.btn(GOLD)} onClick={onNextRound}>Next Round →</button>}
-          {mySeat !== 0 && <div style={{ color: MUTED, fontSize: '13px' }}>Waiting for host to start next round...</div>}
-        </div>
-      )}
-
-      {game.phase === 'game_over' && (
-        <div style={{ background: SURFACE, border: `1px solid ${GOLD}`, borderRadius: '10px', padding: '24px', marginBottom: '12px', textAlign: 'center' }}>
-          <div style={{ fontSize: '28px', fontWeight: 900, color: GOLD, marginBottom: '8px' }}>🎉 Game Over!</div>
-          <div style={{ color: TEXT, fontSize: '18px' }}>
-            {game.levels[0] > 12 ? 'Team A wins!' : 'Team B wins!'}
-          </div>
-        </div>
-      )}
-
-      {error && <div style={{ ...S.error, marginBottom: '12px' }}>{error}<span style={{ float: 'right', cursor: 'pointer' }} onClick={() => setError('')}>✕</span></div>}
-
-      {/* My Hand */}
-      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <span style={S.label}>Your Hand ({sortedHand.length} cards)</span>
-          <span style={S.badge(myTeam === 0 ? GOLD : '#52a8a8')}>Team {myTeam === 0 ? 'A' : 'B'} {myTeamAttacking ? '⚔' : '🛡'}</span>
-        </div>
-        {/* Group hand by suit */}
-        {(() => {
-          const groups = [];
-          const nonTrump = sortedHand.filter(card => !isTrump(card, game.trumpSuit, game.trumpNumber));
-          const trumpCards = sortedHand.filter(card => isTrump(card, game.trumpSuit, game.trumpNumber));
-          const suits = ['\u2660','\u2665','\u2666','\u2663'].filter(s => s !== game.trumpSuit);
-          suits.forEach(suit => {
-            const cards = nonTrump.filter(c => c.suit === suit);
-            if (cards.length) groups.push({ label: suit, cards, color: (suit==='\u2665'||suit==='\u2666') ? '#cc2200' : '#1a1a1a' });
-          });
-          if (trumpCards.length) groups.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
-          return groups.map(({ label, cards, color }) => (
-            <div key={label} style={{ marginBottom: '6px' }}>
-              <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '4px 4px 8px 4px', gap: '0px', WebkitOverflowScrolling: 'touch' }}>
-                {cards.map(card => (
-                  <PlayingCard key={card.id} card={card}
-                    selected={selectedIds.includes(card.id)}
-                    onClick={() => toggleCard(card.id)} />
-                ))}
-              </div>
-            </div>
-          ));
-        })()}
-      </div>
-
-      {/* Log + played cards history */}
-      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', marginTop: '8px' }}>
-        <div style={{ fontSize: '11px', color: GOLD, fontWeight: 700, marginBottom: '6px', letterSpacing: '0.1em' }}>GAME LOG</div>
-        {/* Tricks history */}
-        {(game.tricks || []).length > 0 && (
-          <div style={{ marginBottom: '8px', maxHeight: '140px', overflowY: 'auto' }}>
-            {[...(game.tricks || [])].reverse().map((trick, ti) => {
-              const trickNum = (game.tricks || []).length - ti;
-              const winnerName = room.players.find(p => p.seat === trick.winner)?.name || `Seat ${trick.winner+1}`;
-              return (
-                <div key={ti} style={{ marginBottom: '6px', paddingBottom: '6px', borderBottom: `1px solid ${BORDER}` }}>
-                  <div style={{ fontSize: '10px', color: MUTED, marginBottom: '3px' }}>
-                    Trick {trickNum} — <span style={{ color: trick.winner % 2 === 0 ? GOLD : '#52a8a8' }}>{winnerName}</span> wins {trick.points > 0 ? `(+${trick.points}pts)` : ''}
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {trick.plays.map((play, pi) => {
-                      const pName = room.players.find(p => p.seat === play.playerIdx)?.name || `Seat ${play.playerIdx+1}`;
-                      return (
-                        <div key={pi} style={{ fontSize: '10px', color: MUTED }}>
-                          <span style={{ color: TEXT }}>{pName}: </span>
-                          {play.cards.map(card => {
-                            const isRed = card.suit === '\u2665' || card.suit === '\u2666';
-                            const isJoker = card.suit === 'JOKER';
-                            return (
-                              <span key={card.id} style={{ color: isJoker ? GOLD : isRed ? '#cc2200' : TEXT, marginRight: '3px', fontWeight: 600 }}>
-                                {isJoker ? (card.rank === 'BIG' ? 'BJ' : 'SJ') : `${card.rank}${card.suit}`}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {/* Event log */}
-        {game.log && game.log.length > 0 && (
-          <div style={{ maxHeight: '80px', overflowY: 'auto' }}>
-            {[...game.log].reverse().map((entry, i) => (
-              <div key={i} style={{ fontSize: '10px', color: MUTED, padding: '1px 0' }}>{entry}</div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
-  render() {
-    if (this.state.error) {
-      return (
-        <div style={{ padding: '20px', color: '#ff6b6b', background: '#1a1a2e', minHeight: '100vh' }}>
-          <div style={{ fontSize: '18px', fontWeight: 700, marginBottom: '12px' }}>Something went wrong</div>
-          <pre style={{ fontSize: '12px', whiteSpace: 'pre-wrap', color: '#aaa' }}>{this.state.error?.message}</pre>
-          <button onClick={() => this.setState({ error: null })} style={{ marginTop: '16px', padding: '8px 16px', background: '#3a3a5c', border: 'none', color: 'white', borderRadius: '6px', cursor: 'pointer' }}>
-            Try Again
-          </button>
-        </div>
-      );
+  if (type === 'single') {
+    const ledRank = cardRankVal(cards[0]);
+    if (suit === 'TRUMP') {
+      // Must have a higher trump
+      return suitCards.some(c => trumpRank(c, trumpSuit, trumpNumber) > ledRank);
+    } else {
+      // Must have a higher card of the SAME non-trump suit
+      // (trump beating non-trump in a big play challenge is NOT a forced challenge)
+      return suitCards.some(c => RANKS.indexOf(c.rank) > RANKS.indexOf(cards[0].rank));
     }
-    return this.props.children;
+  }
+
+  if (type === 'pair') {
+    const ledRank = cardRankVal(cards[0]);
+    // Need a pair of higher rank in same suit
+    const groups = {};
+    for (const c of suitCards) {
+      const k = cardKey(c, trumpSuit, trumpNumber);
+      groups[k] = (groups[k] || 0) + 1;
+    }
+    for (const [k, cnt] of Object.entries(groups)) {
+      if (cnt >= 2) {
+        const sample = suitCards.find(c => cardKey(c, trumpSuit, trumpNumber) === k);
+        if (!sample) continue;
+        if (cardRankVal(sample) > ledRank) return true;
+      }
+    }
+    // Trump pair beats non-trump pair (same suit rule — opponent has trump pairs)
+    if (suit !== 'TRUMP') {
+      const trumpGroups = {};
+      for (const c of getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber)) {
+        const tk = cardKey(c, trumpSuit, trumpNumber);
+        trumpGroups[tk] = (trumpGroups[tk] || 0) + 1;
+      }
+      if (Object.values(trumpGroups).some(n => n >= 2)) return true;
+    }
+    return false;
+  }
+
+  if (type === 'triple') {
+    const ledRank = cardRankVal(cards[0]);
+    const groups = {};
+    for (const c of suitCards) {
+      const k = cardKey(c, trumpSuit, trumpNumber);
+      groups[k] = (groups[k] || 0) + 1;
+    }
+    for (const [k, cnt] of Object.entries(groups)) {
+      if (cnt >= 3) {
+        const sample = suitCards.find(c => cardKey(c, trumpSuit, trumpNumber) === k);
+        if (!sample) continue;
+        if (cardRankVal(sample) > ledRank) return true;
+      }
+    }
+    if (suit !== 'TRUMP') {
+      const tg = {};
+      for (const c of getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber)) {
+        const tk = cardKey(c, trumpSuit, trumpNumber);
+        tg[tk] = (tg[tk] || 0) + 1;
+      }
+      if (Object.values(tg).some(n => n >= 3)) return true;
+    }
+    return false;
+  }
+
+  if (type === 'pair_tractor' || type === 'triple_tractor') {
+    const groupSize = type === 'triple_tractor' ? 3 : 2;
+
+    // Find the max rank in the led tractor
+    let maxLedRank = -1;
+    for (const card of cards) {
+      const r = cardRankVal(card);
+      if (r > maxLedRank) maxLedRank = r;
+    }
+
+    // Build group map for hand's suit cards
+    const hg = {};
+    for (const c of suitCards) {
+      const k = cardKey(c, trumpSuit, trumpNumber);
+      hg[k] = (hg[k] || 0) + 1;
+    }
+
+    // Get eligible keys (has enough copies)
+    const eligibleKeys = Object.keys(hg).filter(k => hg[k] >= groupSize);
+    if (eligibleKeys.length < 2) {
+      // Can't form a tractor — but trump tractor beats non-trump
+      if (suit !== 'TRUMP') {
+        return hasTractor(getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber), groupSize, 'TRUMP', trumpSuit, trumpNumber);
+      }
+      return false;
+    }
+
+    // Sort eligible keys by rank
+    const order = suit === 'TRUMP' ? getTrumpOrder(trumpSuit, trumpNumber) : null;
+    const getRankIdx = (k) => {
+      if (order) return order.indexOf(k);
+      // For non-trump: key format is "SUIT_RANK", get rank part
+      const parts = k.split('_');
+      return RANKS.indexOf(parts[parts.length - 1]);
+    };
+    eligibleKeys.sort((a, b) => getRankIdx(a) - getRankIdx(b));
+
+    // Look for consecutive pairs/triples that form a higher tractor
+    for (let i = 1; i < eligibleKeys.length; i++) {
+      const prevIdx = getRankIdx(eligibleKeys[i - 1]);
+      const currIdx = getRankIdx(eligibleKeys[i]);
+      if (currIdx === prevIdx + 1 && currIdx > maxLedRank) return true;
+    }
+
+    // Trump tractor beats non-trump tractor
+    if (suit !== 'TRUMP') {
+      return hasTractor(getSuitCards(hand, 'TRUMP', trumpSuit, trumpNumber), groupSize, 'TRUMP', trumpSuit, trumpNumber);
+    }
+    return false;
+  }
+
+  return false;
+}
+
+
+// Given a big play, find the first counterclockwise player who MUST challenge.
+// Returns the seat index, or null if nobody can beat anything.
+// Matches App.js call signature: findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpNumber)
+// Returns { challengerSeat, components } or null
+export function findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpNumber) {
+  const components = decomposeCombo(playedCards, trumpSuit, trumpNumber);
+  const order = [(leaderSeat + 3) % 4, (leaderSeat + 2) % 4, (leaderSeat + 1) % 4];
+  for (const seat of order) {
+    const hand = hands[seat] || [];
+    if (components.some(comp => canBeatComponent(hand, comp, trumpSuit, trumpNumber))) {
+      return { challengerSeat: seat, components };
+    }
+  }
+  return null;
+}
+
+// ── Combo decomposition & auto-challenge ─────────────────────────────────────
+
+// Tier values for comparison (higher = better)
+
+// Given a hand's cards in one suit, find all possible groups keyed by cardKey
+function getGroupMap(cards, trumpSuit, trumpNumber) {
+  const map = {};
+  for (const c of cards) {
+    const k = cardKey(c, trumpSuit, trumpNumber);
+    if (!map[k]) map[k] = [];
+    map[k].push(c);
+  }
+  return map;
+}
+
+// Get consecutive key sequences (for tractor detection) sorted by rank
+function getConsecutiveRuns(keys, leadSuit, trumpSuit, trumpNumber) {
+  if (leadSuit === 'TRUMP') {
+    const order = getTrumpOrder(trumpSuit, trumpNumber);
+    const pos = keys.map(k => ({ k, p: order.indexOf(k) })).filter(x => x.p !== -1).sort((a, b) => a.p - b.p);
+    return pos.map(x => x.k);
+  } else {
+    return keys
+      .map(k => ({ k, r: RANKS.indexOf(k.split('_').pop()) }))
+      .filter(x => x.r !== -1)
+      .sort((a, b) => a.r - b.r)
+      .map(x => x.k);
   }
 }
 
+// Find the longest tractor (consecutive pairs/triples) starting at each position
+
+// Decompose a set of same-suit cards into the optimal sub-components
+// "Optimal" = maximize the minimum tier across all components
+
+// ── Auto-challenge detection ─────────────────────────────────────────────────
+
+
+function getSortedKeys(map, leadSuit, trumpSuit, trumpNumber) {
+  const keys = Object.keys(map);
+  if (leadSuit === 'TRUMP') {
+    const order = getTrumpOrder(trumpSuit, trumpNumber);
+    return keys.filter(k => order.includes(k)).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  }
+  return keys.sort((a, b) => RANKS.indexOf(a.split('_').pop()) - RANKS.indexOf(b.split('_').pop()));
+}
+
+function findTractorRuns(map, minGroupSize, sortedKeys) {
+  const tractors = [];
+  let i = 0;
+  while (i < sortedKeys.length) {
+    if ((map[sortedKeys[i]] || []).length < minGroupSize) { i++; continue; }
+    let len = 1;
+    while (i + len < sortedKeys.length && (map[sortedKeys[i + len]] || []).length >= minGroupSize) len++;
+    if (len >= 2) tractors.push({ start: i, length: len, keys: sortedKeys.slice(i, i + len) });
+    i += len;
+  }
+  return tractors;
+}
+
+function applyUsed(map, keys, count) {
+  const copy = {};
+  for (const k of Object.keys(map)) copy[k] = [...map[k]];
+  for (const k of keys) {
+    copy[k] = (copy[k] || []).slice(count);
+    if (!copy[k].length) delete copy[k];
+  }
+  return copy;
+}
+
+// Decompose cards into components, maximizing the minimum tier
+export function decomposeCards(cards, leadSuit, trumpSuit, trumpNumber) {
+  const baseMap = getGroupMap(cards, trumpSuit, trumpNumber);
+
+  function solve(map) {
+    const sortedKeys = getSortedKeys(map, leadSuit, trumpSuit, trumpNumber);
+    if (!sortedKeys.length) return { components: [], minTier: 999 };
+
+    let best = null;
+
+    const tryOption = (type, tier, usedKeys, usedCount, usedCards) => {
+      const rest = solve(applyUsed(map, usedKeys, usedCount));
+      const minTier = Math.min(tier, rest.minTier);
+      const comp = { type, tier, cards: usedCards };
+      if (!best || minTier > best.minTier) best = { components: [comp, ...rest.components], minTier };
+    };
+
+    // Triple tractor
+    const tt = findTractorRuns(map, 3, sortedKeys);
+    for (const t of tt) {
+      for (let len = t.length; len >= 2; len--) {
+        const tKeys = t.keys.slice(0, len);
+        tryOption('triple_tractor', TIER.triple_tractor, tKeys, 3, tKeys.flatMap(k => map[k].slice(0, 3)));
+      }
+    }
+
+    // Pair tractor
+    const pt = findTractorRuns(map, 2, sortedKeys);
+    for (const t of pt) {
+      for (let len = t.length; len >= 2; len--) {
+        const tKeys = t.keys.slice(0, len);
+        tryOption('pair_tractor', TIER.pair_tractor, tKeys, 2, tKeys.flatMap(k => map[k].slice(0, 2)));
+      }
+    }
+
+    // Triple
+    for (const k of sortedKeys) {
+      if ((map[k] || []).length >= 3) {
+        tryOption('triple', TIER.triple, [k], 3, map[k].slice(0, 3));
+        break;
+      }
+    }
+
+    // Pair
+    for (const k of sortedKeys) {
+      if ((map[k] || []).length >= 2) {
+        tryOption('pair', TIER.pair, [k], 2, map[k].slice(0, 2));
+        break;
+      }
+    }
+
+    // Single
+    const sk = sortedKeys[0];
+    tryOption('single', TIER.single, [sk], 1, [map[sk][0]]);
+
+    return best || { components: [], minTier: 0 };
+  }
+
+  return solve(baseMap).components;
+}
+
+export function findMandatoryChallenger(leaderSeat, hands, leadCards, trumpSuit, trumpNumber) {
+  const leadSuit = getLeadSuit(leadCards, trumpSuit, trumpNumber);
+  const components = decomposeCards(leadCards, leadSuit, trumpSuit, trumpNumber);
+  const order = [(leaderSeat + 3) % 4, (leaderSeat + 2) % 4, (leaderSeat + 1) % 4];
+  for (const seat of order) {
+    const hand = hands[seat] || [];
+    if (components.some(comp => canBeatComponent(comp, hand, trumpSuit, trumpNumber))) {
+      return seat;
+    }
+  }
+  return null;
+}
