@@ -620,7 +620,11 @@ export default function App() {
 
 
   const handleDeclareTrump = async () => {
-    if (!game || selectedCards.length === 0) return;
+    console.log('[Declare] mySeat:', mySeat, 'selectedCards:', selectedCards.map(c=>c.rank+c.suit), 'trumpNumber:', game?.trumpNumber, 'game exists:', !!game);
+    if (!game || selectedCards.length === 0) {
+      console.log('[Declare] early return - game:', !!game, 'selectedCards.length:', selectedCards.length);
+      return;
+    }
 
     const allJokers = selectedCards.every(c => c.suit === 'JOKER');
     const existingDecl = game.trumpDeclaration;
@@ -629,9 +633,11 @@ export default function App() {
     const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
     const iAmDeclarer = existingDecl?.playerIdx === mySeat;
 
+    console.log('[Declare] allJokers:', allJokers, 'existingDecl:', existingDecl?.playerIdx, 'iAmDeclarer:', iAmDeclarer, 'mySeat:', mySeat);
     // Validate cards: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
       if (!selectedCards.every(c => c.rank === game.trumpNumber)) {
+        console.log('[Declare] rank mismatch - cards:', selectedCards.map(c=>c.rank), 'trumpNumber:', game.trumpNumber);
         return setError(`Must select ${game.trumpNumber}s (the trump number) to declare trump`);
       }
       if (!selectedCards.every(c => c.suit === selectedCards[0].suit)) {
@@ -1290,12 +1296,14 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           return groups.map(({ label, cards, color }) => (
             <div key={label} style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'visible', padding: '28px 16px 12px 16px', gap: '4px', WebkitOverflowScrolling: 'touch' }}>
+              <div style={{ overflowX: 'auto', overflowY: 'visible', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }}>
+                <div style={{ display: 'flex', flexWrap: 'nowrap', padding: '28px 16px 4px 16px', gap: '4px', width: 'max-content', minWidth: '100%' }}>
                 {cards.map(card => (
                   <PlayingCard key={card.id} card={card}
                     selected={selectedIds.includes(card.id)}
                     onClick={() => toggleCard(card.id)} />
                 ))}
+                </div>
               </div>
             </div>
           ));
