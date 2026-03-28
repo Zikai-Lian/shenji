@@ -1265,7 +1265,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
                     }}
                   >
                     <div style={{ fontSize: '10px', color: isBeatable ? RED : MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {comp.type.replace('_', ' ')}{isBeatable ? ' ← can beat' : ' (can't beat)'}
+                      {comp.type.replace('_', ' ')}{isBeatable ? ' ← can beat' : " (can't beat)"}
                     </div>
                     <div style={{ display: 'flex', gap: '2px' }}>
                       {comp.cards.map(card => <PlayingCard key={card.id} card={card} small />)}
