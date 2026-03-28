@@ -918,7 +918,8 @@ export default function App() {
 // ── Game Screen ───────────────────────────────────────────────────────────────
 function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onConfirmPass, onLeave }) {
   const [selectedCompIdx, setSelectedCompIdx] = useState(null);
-  const isMyTurn = game.currentTurn === mySeat && game.phase !== 'trick_end';
+  const phase = game?.phase;
+  const isMyTurn = game.currentTurn === mySeat && phase !== 'trick_end';
   useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
 
   const isKittyHolder = game.kittyHolder === mySeat;
