@@ -504,69 +504,65 @@ export default function App() {
   }, [game?.phase, game?.trickEndWinner]);
 
     useEffect(() => {
-    if (!game || game.phase !== 'dealing' || game.dealComplete) return;
+    // Only host drives dealing
+    if (!room || !game || game.phase !== 'dealing' || game.dealComplete || mySeat !== 0) return;
 
-    // Check if all players confirmed pass mid-deal — resolve immediately
-    if (!game.trumpSuit) {
-      const midConfirmed = game.trumpConfirmed || [];
-      if (midConfirmed.length >= 4) {
-        if (mySeat === 0) {
-          const trumpNum = game.trumpNumber;
+    dealTimerRef.current = setTimeout(async () => {
+      // Always fetch fresh state to avoid stale closure overwriting trump declarations etc.
+      const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+      const g = freshRoom?.game;
+      if (!g || g.dealComplete || g.phase !== 'dealing') return;
+
+      // Check all-pass mid-deal
+      if (!g.trumpSuit) {
+        const midConfirmed = g.trumpConfirmed || [];
+        if (midConfirmed.length >= 4) {
+          const trumpNum = g.trumpNumber;
           let resolvedSuit = null;
-          for (const card of (game.kitty || [])) {
+          for (const card of (g.kitty || [])) {
             if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
           }
-          if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
-          const kittyHolder = game.firstCardSeat ?? 0;
-          updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-            log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
+          if (!resolvedSuit) resolvedSuit = g.firstCardSuit || '♠';
+          const kittyHolder = g.firstCardSeat ?? 0;
+          await updateRoom(room.id, { game: { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
+            log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${freshRoom.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
+          return;
+        }
+      }
+
+      // All cards dealt?
+      if (g.dealIndex >= (g.dealSequence?.length || 0)) {
+        if (g.trumpSuit) {
+          const kittyHolder = g.roundNum === 1
+            ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
+            : (g.firstCardSeat ?? 0);
+          await updateRoom(room.id, { game: { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
+        } else {
+          const confirmed = g.trumpConfirmed || [];
+          if (confirmed.length >= 4) {
+            const trumpNum = g.trumpNumber;
+            let resolvedSuit = null;
+            for (const card of (g.kitty || [])) {
+              if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
+            }
+            if (!resolvedSuit) resolvedSuit = g.firstCardSuit || '♠';
+            const kittyHolder = g.firstCardSeat ?? 0;
+            await updateRoom(room.id, { game: { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
+              log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${freshRoom.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
+          }
         }
         return;
       }
-    }
 
-    if (game.dealIndex >= (game.dealSequence?.length || 0)) {
-      // All cards dealt
-      if (game.trumpSuit) {
-        // Trump already declared — just finalize
-        if (mySeat === 0) {
-          const kittyHolder = game.roundNum === 1
-            ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
-            : (game.firstCardSeat ?? 0);
-          updateRoom(room.id, { game: { ...game, kittyHolder, currentTurn: kittyHolder, dealComplete: true } });
-        }
-      } else {
-        // No trump declared yet — wait for all 4 players to confirm they pass
-        const confirmed = game.trumpConfirmed || [];
-        if (confirmed.length >= 4) {
-          // All confirmed — stop dealing and auto-resolve from kitty/first card
-          if (mySeat === 0) {
-            const trumpNum = game.trumpNumber;
-            let resolvedSuit = null;
-            for (const card of (game.kitty || [])) {
-              if (card.rank === trumpNum && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
-            }
-            if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
-            const kittyHolder = game.firstCardSeat ?? 0;
-            updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-              log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
-          }
-          return; // stop the deal timer
-        }
-        // else: waiting for players to confirm — UI handles this
-      }
-      return;
-    }
-
-    // Only host drives the deal timer to avoid race conditions
-    if (mySeat !== 0) return;
-
-    dealTimerRef.current = setTimeout(async () => {
-      const seq = game.dealSequence;
-      const idx = game.dealIndex;
+      // Deal next card
+      const seq = g.dealSequence;
+      const idx = g.dealIndex;
       const { seat, card } = seq[idx];
-      const newHands = game.hands.map((h, i) => i === seat ? [...h, card] : h);
-      await updateRoom(room.id, { game: { ...game, hands: newHands, dealIndex: idx + 1 } });
+      const newHands = g.hands.map((h, i) => i === seat ? [...h, card] : h);
+      await updateRoom(room.id, { game: { ...g, hands: newHands, dealIndex: idx + 1,
+        firstCardSeat: idx === 0 ? seat : g.firstCardSeat,
+        firstCardSuit: idx === 0 ? card.suit : g.firstCardSuit,
+      }});
     }, 250);
 
     return () => clearTimeout(dealTimerRef.current);
