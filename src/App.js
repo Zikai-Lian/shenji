@@ -413,6 +413,16 @@ export default function App() {
   };
 
   const handleStartGame = async () => {
+    // Ensure all players have proper seats 0-3 (assign by order if any are -1)
+    const seatedPlayers = [...room.players].sort((a, b) => a.seat - b.seat);
+    const normalizedPlayers = seatedPlayers.map((p, i) => ({
+      ...p,
+      seat: p.seat >= 0 ? p.seat : i
+    }));
+    // Update players with normalized seats before starting
+    if (normalizedPlayers.some((p, i) => p.seat !== room.players[i]?.seat)) {
+      await updateRoom(room.id, { players: normalizedPlayers });
+    }
     const decks = buildDecks();
     const { sequence, kitty } = dealCardsSequential(decks);
     const initialGame = {
@@ -622,7 +632,7 @@ export default function App() {
     // Validate cards: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
       if (!selectedCards.every(c => c.rank === game.trumpNumber)) {
-        return setError(`Must select ${game.trumpNumber}s (trump number) or 2+ jokers`);
+        return setError(`Must select ${game.trumpNumber}s (the trump number) to declare trump`);
       }
       if (!selectedCards.every(c => c.suit === selectedCards[0].suit)) {
         return setError('All selected cards must be the same suit');
@@ -738,9 +748,11 @@ export default function App() {
     // If leading with multiple cards, auto-detect if anyone must challenge
     if (isLeading && selectedCards.length > 1) {
       const newHand = myHand.filter(c => !selectedIds.includes(c.id));
-      const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-      // Check counterclockwise for a forced challenger
+      const newHands = (game.hands || [[],[],[],[]]).map((h, i) => i === mySeat ? newHand : h);
+      console.log('[Challenge] mySeat:', mySeat, 'played:', selectedCards.map(c=>c.rank+c.suit));
+      console.log('[Challenge] newHands sizes:', newHands.map((h,i) => `seat${i}:${h.length}`));
       const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
+      console.log('[Challenge] result:', challengeResult ? `seat ${challengeResult.challengerSeat}` : 'none');
       if (challengeResult) {
         const { challengerSeat, components } = challengeResult;
         await updateRoom(room.id, {
@@ -963,10 +975,10 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
   const myTeamAttacking = myTeam === game.attackingTeam;
 
   return (
-    <div style={{ width: '100%', maxWidth: '640px', padding: '0 16px', boxSizing: 'border-box' }}>
+    <div style={{ width: '100%', maxWidth: '640px' }}>
 
       {/* Scores & Info */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px', padding: '0 16px' }}>
         <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
           <div style={{ ...S.label, marginBottom: '4px' }}>Team A Level</div>
           <div style={{ fontSize: '22px', fontWeight: 900, color: game.attackingTeam === 0 ? GOLD : TEXT }}>
@@ -1057,7 +1069,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
 
           {/* Declare button — always available during dealing */}
           <button style={S.btn(selectedCards.length >= 1 ? GOLD : '#333')} onClick={onDeclareTrump}>
-            Declare Trump ({selectedCards.length} selected)
+            {selectedCards.length === 0 ? 'Select cards to declare trump' : `Declare Trump (${selectedCards.length} card${selectedCards.length > 1 ? 's' : ''})`}
           </button>
 
           {/* Pass button — shown after all cards dealt, when nobody has declared */}
@@ -1259,8 +1271,8 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
       {error && <div style={{ ...S.error, marginBottom: '12px' }}>{error}<span style={{ float: 'right', cursor: 'pointer' }} onClick={() => setError('')}>✕</span></div>}
 
       {/* My Hand */}
-      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '8px 0', overflow: 'visible' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '0', padding: '8px 0', overflow: 'visible', background: 'transparent', border: 'none', overflow: 'visible' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '0 16px' }}>
           <span style={S.label}>Your Hand ({sortedHand.length} cards)</span>
           <span style={S.badge(myTeam === 0 ? GOLD : '#52a8a8')}>Team {myTeam === 0 ? 'A' : 'B'} {myTeamAttacking ? '⚔' : '🛡'}</span>
         </div>
@@ -1276,9 +1288,9 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           });
           if (trumpCards.length) groups.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
           return groups.map(({ label, cards, color }) => (
-            <div key={label} style={{ marginBottom: '6px', margin: '0 -16px 6px -16px' }}>
+            <div key={label} style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '28px 20px 8px 20px', gap: '4px', WebkitOverflowScrolling: 'touch', overflowY: 'visible' }}>
+              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'visible', padding: '28px 16px 12px 16px', gap: '4px', WebkitOverflowScrolling: 'touch' }}>
                 {cards.map(card => (
                   <PlayingCard key={card.id} card={card}
                     selected={selectedIds.includes(card.id)}
