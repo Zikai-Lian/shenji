@@ -355,8 +355,11 @@ export default function App() {
 
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
-    // Update local state immediately — no refetch needed
-    if (updates.game !== undefined) setGame({ ...updates.game });
+    if (updates.game !== undefined) {
+      const ng = { ...updates.game };
+      console.log('[updateRoom] calling setGame, trumpSuit:', ng.trumpSuit, 'phase:', ng.phase);
+      setGame(ng);
+    }
     if (updates.players !== undefined || updates.state !== undefined || updates.host_id !== undefined) {
       setRoom(r => r ? { ...r, ...updates } : r);
     }
