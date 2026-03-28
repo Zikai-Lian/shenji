@@ -164,13 +164,17 @@ function PlayingCard({ card, selected, onClick, small }) {
 
   const Corner = ({ flip }) => (
     <div style={{
-      position:'absolute', [flip?'bottom':'top']:'2px', [flip?'right':'left']:'3px',
+      position:'absolute',
+      top: flip ? 'auto' : '3px',
+      bottom: flip ? '3px' : 'auto',
+      left: flip ? 'auto' : '4px',
+      right: flip ? '4px' : 'auto',
       display:'flex', flexDirection:'column', alignItems:'center',
-      transform: flip ? 'rotate(180deg)' : 'none', lineHeight: 1.1,
-      zIndex: 2,
+      lineHeight: 1.1, zIndex: 2,
+      transform: flip ? 'rotate(180deg)' : 'none',
     }}>
-      <span style={{ fontSize:`${fs}px`, fontWeight:900, color, fontFamily:'Georgia,serif' }}>{rank}</span>
-      {!small && !isJoker && <span style={{ fontSize:'9px', color, lineHeight:1 }}>{suit}</span>}
+      <span style={{ fontSize:`${fs}px`, fontWeight:900, color, fontFamily:'Georgia,serif', display:'block' }}>{rank}</span>
+      {!isJoker && <span style={{ fontSize: small ? '7px' : '9px', color, lineHeight:1, display:'block', marginTop:'1px' }}>{suit}</span>}
     </div>
   );
 
@@ -185,7 +189,7 @@ function PlayingCard({ card, selected, onClick, small }) {
         </div>
       )}
       {!isJoker && !small && isFace && (
-        <div style={{ position:'absolute', top:'18px', left:'5px', right:'5px', bottom:'18px' }}>
+        <div style={{ position:'absolute', top:'22px', left:'5px', right:'5px', bottom:'22px' }}>
           <FacePortrait rank={card.rank} suit={suit} color={color} w={w-10} h={h-36} />
         </div>
       )}
@@ -443,7 +447,41 @@ export default function App() {
   const dealTimerRef = useRef(null);
 
   // ── Auto-deal animation ──────────────────────────────────────────────────
+  // ── Trick end delay — host waits 2s then resolves ──────────────────────────
   useEffect(() => {
+    if (!game || game.phase !== 'trick_end' || mySeat !== 0) return;
+    const timer = setTimeout(async () => {
+      const winner = game.trickEndWinner;
+      const log = game.trickEndLog || game.log;
+      const newHands = game.hands;
+      const newTricks = game.tricks || [];
+      const newScores = game.scores;
+      const totalCards = newHands.reduce((s, h) => s + h.length, 0);
+
+      if (totalCards === 0) {
+        const kittyPts = countPoints(game.kitty || []);
+        const lastWinnerTeam = winner % 2;
+        const mult = kittyMultiplier(
+          (newTricks[newTricks.length - 1]?.plays || []).flatMap(p => p.cards),
+          game.trumpSuit, game.trumpNumber
+        );
+        const finalScores = [...newScores];
+        finalScores[lastWinnerTeam] += kittyPts * mult;
+        const defScore = finalScores[1 - game.attackingTeam];
+        const atkGain = attackerLevelGain(defScore);
+        const defGain = defenderLevelGain(defScore);
+        await updateRoom(room.id, { game: { ...game, currentTrick: [], scores: finalScores,
+          phase: 'round_end',
+          roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
+          log: [...log, `Round over! Defenders scored ${defScore} pts.`] } });
+      } else {
+        await updateRoom(room.id, { game: { ...game, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [game?.phase, game?.trickEndWinner]);
+
+    useEffect(() => {
     if (!game || game.phase !== 'dealing' || game.dealComplete) return;
 
     // Check if all players confirmed pass mid-deal — resolve immediately
@@ -459,7 +497,7 @@ export default function App() {
           if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
           const kittyHolder = game.firstCardSeat ?? 0;
           updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-            log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players[kittyHolder]?.name} holds the kitty.`] } });
+            log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
         }
         return;
       }
@@ -489,7 +527,7 @@ export default function App() {
             if (!resolvedSuit) resolvedSuit = game.firstCardSuit || '♠';
             const kittyHolder = game.firstCardSeat ?? 0;
             updateRoom(room.id, { game: { ...game, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
-              log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players[kittyHolder]?.name} holds the kitty.`] } });
+              log: [...(game.log||[]), `All players passed — trump auto-set to ${resolvedSuit}. ${room.players.find(p => p.seat === kittyHolder)?.name} holds the kitty.`] } });
           }
           return; // stop the deal timer
         }
@@ -577,7 +615,7 @@ export default function App() {
     const allJokers = selectedCards.every(c => c.suit === 'JOKER');
     const existingDecl = game.trumpDeclaration;
     const newSuit = getTrumpSuitFromDeclaration(selectedCards);
-    const declName = room.players[mySeat]?.name;
+    const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
 
     // REINFORCEMENT: same player adds more same-suit trump numbers
     const isReinforcement = existingDecl &&
@@ -603,7 +641,12 @@ export default function App() {
     }
 
     // Fresh declaration or override
-    if (!canDeclareTrump(selectedCards, existingDecl, game.trumpNumber)) {
+    // If I was overridden (I'm not the current declarer) and picking a DIFFERENT suit,
+    // treat as a fresh declaration — I just need valid cards, not to beat the count
+    const wasOverridden = existingDecl && existingDecl.playerIdx !== mySeat;
+    const declaringDifferentSuit = newSuit !== game.trumpSuit;
+    const declCheckDecl = (wasOverridden && declaringDifferentSuit) ? null : existingDecl;
+    if (!canDeclareTrump(selectedCards, declCheckDecl, game.trumpNumber)) {
       return setError(`Select trump number cards (${game.trumpNumber}) or 2+ jokers to declare`);
     }
     const isLocked = !allJokers && selectedCards.length >= 3;
@@ -639,7 +682,7 @@ export default function App() {
     const newHand = myHand.filter(c => !selectedIds.includes(c.id));
     const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
     await updateRoom(room.id, {
-      game: { ...game, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: game.kittyHolder, log: [...(game.log || []), `${room.players[mySeat].name} discarded kitty and set trump.`] }
+      game: { ...game, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: game.kittyHolder, log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
     });
     setSelectedIds([]);
   };
@@ -667,7 +710,7 @@ export default function App() {
       // Check counterclockwise for a forced challenger
       const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
       if (challengeResult) {
-        const { challengerSeat, components, beatableIndices } = challengeResult;
+        const { challengerSeat, components } = challengeResult;
         await updateRoom(room.id, {
           game: {
             ...game,
@@ -675,13 +718,12 @@ export default function App() {
             phase: 'challenge',
             challenge: {
               leaderSeat: mySeat,
-              leaderName: room.players[mySeat].name,
+              leaderName: room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`,
               playedCards: selectedCards,
               components,
-              beatableIndices,
               challengerSeat,
             },
-            log: [...(game.log || []), `${room.players[mySeat].name} leads ${selectedCards.length} cards — ${room.players[challengerSeat]?.name} must challenge!`],
+            log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} leads ${selectedCards.length} cards — ${room.players.find(p => p.seat === challengerSeat)?.name} must challenge!`],
           }
         });
         setSelectedIds([]);
@@ -711,9 +753,9 @@ export default function App() {
         hands: newHands,
         phase: 'playing',
         challenge: null,
-        currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players[leaderSeat].name }],
+        currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players.find(p => p.seat === leaderSeat).name }],
         currentTurn: (leaderSeat + 1) % 4,
-        log: [...(game.log || []), `${room.players[mySeat].name} challenges! ${room.players[leaderSeat].name} must play ${keptCombo.length} cards.`],
+        log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
       }
     });
     setSelectedIds([]);
@@ -724,7 +766,7 @@ export default function App() {
   const commitPlay = async (cards, isLeading) => {
     const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
     const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    const newTrick = [...(game.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players[mySeat].name }];
+    const newTrick = [...(game.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
 
     let newGame = { ...game, hands: newHands, currentTrick: newTrick };
 
@@ -735,21 +777,10 @@ export default function App() {
       const newScores = [...game.scores];
       newScores[winnerTeam] += trickPoints;
       const newTricks = [...(game.tricks || []), { plays: newTrick, winner, points: trickPoints }];
-      const log = [...(game.log || []), `${room.players[winner].name} wins trick (+${trickPoints} pts)`];
-
-      const totalCards = newHands.reduce((s, h) => s + h.length, 0);
-      if (totalCards === 0) {
-        const kittyPts = countPoints(game.kitty || []);
-        const lastTrickWinnerTeam = winner % 2;
-        const mult = kittyMultiplier(newTrick.flatMap(p => p.cards), game.trumpSuit, game.trumpNumber);
-        newScores[lastTrickWinnerTeam] += kittyPts * mult;
-        const defScore = newScores[1 - game.attackingTeam];
-        const atkGain = attackerLevelGain(defScore);
-        const defGain = defenderLevelGain(defScore);
-        newGame = { ...newGame, hands: newHands, currentTrick: [], tricks: newTricks, scores: newScores, phase: 'round_end', roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult }, log: [...log, `Round over! Defenders scored ${defScore} pts.`] };
-      } else {
-        newGame = { ...newGame, hands: newHands, currentTrick: [], tricks: newTricks, scores: newScores, currentTurn: winner, log };
-      }
+      const log = [...(game.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
+      // Show completed trick for 2 seconds before clearing (host drives timer)
+      newGame = { ...newGame, hands: newHands, currentTrick: newTrick, tricks: newTricks,
+        scores: newScores, phase: 'trick_end', trickEndWinner: winner, trickEndLog: log, log };
     } else {
       newGame.currentTurn = (mySeat + 1) % 4;
     }
@@ -806,7 +837,7 @@ export default function App() {
         attackingTeam: newAttacking,
         currentTurn: firstCardSeat,
         selectedCards: [[], [], [], []],
-        log: [`Round ${game.roundNum + 1} starts. ${room.players[newKittyHolder].name} holds kitty.`],
+        log: [`Round ${game.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
         roundNum: (game.roundNum || 1) + 1,
         roundResult: null,
       }
@@ -887,7 +918,7 @@ export default function App() {
 // ── Game Screen ───────────────────────────────────────────────────────────────
 function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggleCard, selectedCards, error, setError, onDeclareTrump, onTakeKitty, onDiscardKitty, onPlayCards, onNextRound, playerId, onChallenge, onConfirmPass, onLeave }) {
   const [selectedCompIdx, setSelectedCompIdx] = useState(null);
-  const isMyTurn = game.currentTurn === mySeat;
+  const isMyTurn = game.currentTurn === mySeat && game.phase !== 'trick_end';
   useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
 
   const isKittyHolder = game.kittyHolder === mySeat;
@@ -974,7 +1005,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
 
           <div style={{ color: MUTED, fontSize: '13px', marginBottom: '12px' }}>
             {game.trumpDeclaration
-              ? `${room.players[game.trumpDeclaration.playerIdx]?.name} declared trump${game.trumpSuit ? ` (${game.trumpSuit})` : ' (no suit — jokers)'}. Someone can override with more cards.`
+              ? `${room.players.find(p => p.seat === game.trumpDeclaration.playerIdx)?.name} declared trump${game.trumpSuit ? ` (${game.trumpSuit})` : ' (no suit — jokers)'}. Someone can override with more cards.`
               : 'Select 2+ cards of the same rank to declare trump. You can declare any time during dealing.'}
           </div>
 
@@ -986,7 +1017,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           {!game.trumpSuit && (() => {
             const confirmed = game.trumpConfirmed || [];
             const iConfirmed = confirmed.includes(mySeat);
-            const waitingFor = [0,1,2,3].filter(s => !confirmed.includes(s)).map(s => room.players[s]?.name).filter(Boolean);
+            const waitingFor = [0,1,2,3].filter(s => !confirmed.includes(s)).map(s => room.players.find(p => p.seat === s)?.name).filter(Boolean);
             return (
               <div style={{ marginTop: '12px', padding: '12px', background: '#1a1200', border: `1px solid ${GOLD}44`, borderRadius: '8px' }}>
                 <div style={{ color: GOLD, fontWeight: 700, fontSize: '13px', marginBottom: '8px' }}>
@@ -1018,7 +1049,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           )}
           {!isKittyHolder && game.dealComplete && (
             <div style={{ color: MUTED, fontSize: '12px', textAlign: 'center', marginTop: '8px' }}>
-              Waiting for {room.players[game.kittyHolder]?.name} to take the kitty...
+              Waiting for {room.players.find(p => p.seat === game.kittyHolder)?.name} to take the kitty...
             </div>
           )}
         </div>
@@ -1036,7 +1067,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
 
       {game.phase === 'kitty' && !isKittyHolder && (
         <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px', textAlign: 'center', color: MUTED }}>
-          Waiting for {room.players[game.kittyHolder]?.name} to discard kitty...
+          Waiting for {room.players.find(p => p.seat === game.kittyHolder)?.name} to discard kitty...
         </div>
       )}
 
@@ -1045,7 +1076,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         const ch = game.challenge;
         const isChallenger = ch.challengerSeat === mySeat;
         const isLeader = ch.leaderSeat === mySeat;
-        const challName = room.players[ch.challengerSeat]?.name;
+        const challName = room.players.find(p => p.seat === ch.challengerSeat)?.name;
 
         const components = ch.components || [];
 
@@ -1110,7 +1141,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         );
       })()}
 
-      {game.phase === 'playing' && (
+      {game.(phase === 'playing' || phase === 'trick_end') && (
         <div style={{ background: SURFACE, border: `1px solid ${isMyTurn ? GOLD + '66' : BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
           {isMyTurn ? (
             <>
@@ -1121,7 +1152,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
             </>
           ) : (
             <div style={{ textAlign: 'center', color: MUTED }}>
-              Waiting for {room.players[game.currentTurn]?.name}...
+              Waiting for {room.players.find(p => p.seat === game.currentTurn)?.name}...
             </div>
           )}
         </div>
@@ -1158,26 +1189,79 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           <span style={S.label}>Your Hand ({sortedHand.length} cards)</span>
           <span style={S.badge(myTeam === 0 ? GOLD : '#52a8a8')}>Team {myTeam === 0 ? 'A' : 'B'} {myTeamAttacking ? '⚔' : '🛡'}</span>
         </div>
-        <div style={S.hand}>
-          {sortedHand.map(card => (
-            <PlayingCard
-              key={card.id}
-              card={card}
-              selected={selectedIds.includes(card.id)}
-              onClick={() => toggleCard(card.id)}
-            />
-          ))}
-        </div>
+        {/* Group hand by suit */}
+        {(() => {
+          const groups = [];
+          const nonTrump = sortedHand.filter(card => !isTrump(card, game.trumpSuit, game.trumpNumber));
+          const trumpCards = sortedHand.filter(card => isTrump(card, game.trumpSuit, game.trumpNumber));
+          const suits = ['\u2660','\u2665','\u2666','\u2663'].filter(s => s !== game.trumpSuit);
+          suits.forEach(suit => {
+            const cards = nonTrump.filter(c => c.suit === suit);
+            if (cards.length) groups.push({ label: suit, cards, color: (suit==='\u2665'||suit==='\u2666') ? '#cc2200' : '#1a1a1a' });
+          });
+          if (trumpCards.length) groups.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
+          return groups.map(({ label, cards, color }) => (
+            <div key={label} style={{ marginBottom: '6px' }}>
+              <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
+              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '4px 4px 8px 4px', gap: '0px', WebkitOverflowScrolling: 'touch' }}>
+                {cards.map(card => (
+                  <PlayingCard key={card.id} card={card}
+                    selected={selectedIds.includes(card.id)}
+                    onClick={() => toggleCard(card.id)} />
+                ))}
+              </div>
+            </div>
+          ));
+        })()}
       </div>
 
-      {/* Log */}
-      {game.log && game.log.length > 0 && (
-        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', marginTop: '8px', maxHeight: '100px', overflowY: 'auto' }}>
-          {[...game.log].reverse().map((entry, i) => (
-            <div key={i} style={{ fontSize: '11px', color: MUTED, padding: '2px 0', borderBottom: i < game.log.length - 1 ? `1px solid ${BORDER}` : 'none' }}>{entry}</div>
-          ))}
-        </div>
-      )}
+      {/* Log + played cards history */}
+      <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px', marginTop: '8px' }}>
+        <div style={{ fontSize: '11px', color: GOLD, fontWeight: 700, marginBottom: '6px', letterSpacing: '0.1em' }}>GAME LOG</div>
+        {/* Tricks history */}
+        {(game.tricks || []).length > 0 && (
+          <div style={{ marginBottom: '8px', maxHeight: '140px', overflowY: 'auto' }}>
+            {[...(game.tricks || [])].reverse().map((trick, ti) => {
+              const trickNum = (game.tricks || []).length - ti;
+              const winnerName = room.players.find(p => p.seat === trick.winner)?.name || `Seat ${trick.winner+1}`;
+              return (
+                <div key={ti} style={{ marginBottom: '6px', paddingBottom: '6px', borderBottom: `1px solid ${BORDER}` }}>
+                  <div style={{ fontSize: '10px', color: MUTED, marginBottom: '3px' }}>
+                    Trick {trickNum} — <span style={{ color: trick.winner % 2 === 0 ? GOLD : '#52a8a8' }}>{winnerName}</span> wins {trick.points > 0 ? `(+${trick.points}pts)` : ''}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {trick.plays.map((play, pi) => {
+                      const pName = room.players.find(p => p.seat === play.playerIdx)?.name || `Seat ${play.playerIdx+1}`;
+                      return (
+                        <div key={pi} style={{ fontSize: '10px', color: MUTED }}>
+                          <span style={{ color: TEXT }}>{pName}: </span>
+                          {play.cards.map(card => {
+                            const isRed = card.suit === '\u2665' || card.suit === '\u2666';
+                            const isJoker = card.suit === 'JOKER';
+                            return (
+                              <span key={card.id} style={{ color: isJoker ? GOLD : isRed ? '#cc2200' : TEXT, marginRight: '3px', fontWeight: 600 }}>
+                                {isJoker ? (card.rank === 'BIG' ? 'BJ' : 'SJ') : `${card.rank}${card.suit}`}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {/* Event log */}
+        {game.log && game.log.length > 0 && (
+          <div style={{ maxHeight: '80px', overflowY: 'auto' }}>
+            {[...game.log].reverse().map((entry, i) => (
+              <div key={i} style={{ fontSize: '10px', color: MUTED, padding: '1px 0' }}>{entry}</div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }class ErrorBoundary extends React.Component {
