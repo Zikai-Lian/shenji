@@ -343,19 +343,14 @@ export default function App() {
   // gameRef always holds latest game state to avoid stale closures
   const gameRef = useRef(game);
   useEffect(() => { gameRef.current = game; }, [game]);
+  // Tracks the dealIndex we last wrote, so timer doesn't re-fire on own refetch
+  const lastDealtIndexRef = useRef(-1);
 
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
-    // Immediately update local state so writer sees own changes
-    setRoom(r => {
-      if (!r) return r;
-      const next = { ...r };
-      if (updates.game !== undefined) next.game = updates.game;
-      if (updates.players !== undefined) next.players = updates.players;
-      if (updates.state !== undefined) next.state = updates.state;
-      if (updates.host_id !== undefined) next.host_id = updates.host_id;
-      return next;
-    });
+    // Re-fetch to get exact server state (guarantees new object reference = re-render)
+    const { data } = await supabase.from('rooms').select('*').eq('id', roomId).single();
+    if (data) setRoom({ ...data });
   };
   const [playerId, setPlayerId] = useState(null);
   const [restoring, setRestoring] = useState(true);
@@ -566,6 +561,8 @@ export default function App() {
       const { data: preWriteRoom } = await supabase.from('rooms').select('game').eq('id', room.id).single();
       const pg = preWriteRoom?.game;
       if (!pg || pg.dealComplete || pg.dealIndex !== g.dealIndex) return; // someone else already wrote
+      if (pg.dealIndex === lastDealtIndexRef.current) return; // we already dealt this card
+      lastDealtIndexRef.current = pg.dealIndex;
       const seq = pg.dealSequence;
       const idx = pg.dealIndex;
       const { seat, card } = seq[idx];
