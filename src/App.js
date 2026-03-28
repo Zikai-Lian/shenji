@@ -762,28 +762,28 @@ export default function App() {
     if (game.currentTurn !== mySeat) return setError("Not your turn");
     if (selectedCards.length === 0) return setError('Select cards to play');
 
-    const combo = detectCombo(selectedCards, game.trumpSuit, game.trumpNumber);
+    const combo = detectCombo(selectedCards, freshGame.trumpSuit, freshGame.trumpNumber);
     if (!combo.valid) return setError('Invalid combo');
 
-    const isLeading = game.currentTrick.length === 0;
+    const isLeading = freshGame.currentTrick.length === 0;
 
     if (!isLeading) {
-      const leadPlay = game.currentTrick[0];
-      const leadCombo = detectCombo(leadPlay.cards, game.trumpSuit, game.trumpNumber);
-      const followErr = validateFollow(selectedCards, myHand, { ...leadCombo, cards: leadPlay.cards }, game.trumpSuit, game.trumpNumber);
+      const leadPlay = freshGame.currentTrick[0];
+      const leadCombo = detectCombo(leadPlay.cards, freshGame.trumpSuit, freshGame.trumpNumber);
+      const followErr = validateFollow(selectedCards, myHand, { ...leadCombo, cards: leadPlay.cards }, freshGame.trumpSuit, freshGame.trumpNumber);
       if (followErr) return setError(followErr);
     }
 
     // If leading with multiple cards, auto-detect if anyone must challenge
     if (isLeading && selectedCards.length > 1) {
       const newHand = myHand.filter(c => !selectedIds.includes(c.id));
-      const newHands = (game.hands || [[],[],[],[]]).map((h, i) => i === mySeat ? newHand : h);
-          const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
-        if (challengeResult) {
+      const newHands = (freshGame.hands || [[],[],[],[]]).map((h, i) => i === mySeat ? newHand : h);
+      const challengeResult = findChallenger(mySeat, newHands, selectedCards, freshGame.trumpSuit, freshGame.trumpNumber);
+      if (challengeResult) {
         const { challengerSeat, components } = challengeResult;
         await updateRoom(room.id, {
           game: {
-            ...gameRef.current,
+            ...freshGame,
             hands: newHands,
             phase: 'challenge',
             challenge: {
@@ -793,7 +793,7 @@ export default function App() {
               components,
               challengerSeat,
             },
-            log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} leads ${selectedCards.length} cards — ${room.players.find(p => p.seat === challengerSeat)?.name} must challenge!`],
+            log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} leads ${selectedCards.length} cards — ${room.players.find(p => p.seat === challengerSeat)?.name} must challenge!`],
           }
         });
         setSelectedIds([]);
