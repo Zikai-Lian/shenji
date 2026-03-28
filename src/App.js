@@ -341,16 +341,26 @@ export default function App() {
 
   // Wrapper: write to Supabase AND update local state immediately
   // (Supabase realtime doesn't echo your own writes back)
-  // gameRef always holds latest game state to avoid stale closures
+  // gameRef always holds latest game state synchronously
   const gameRef = useRef(game);
-  useEffect(() => { gameRef.current = game; }, [game]);
-  // Tracks the dealIndex we last wrote, so timer doesn't re-fire on own refetch
-  const lastDealtIndexRef = useRef(-1);
+  const setGameAndRef = (newGame) => {
+    if (typeof newGame === 'function') {
+      setGame(prev => {
+        const next = newGame(prev);
+        gameRef.current = next;
+        return next;
+      });
+    } else {
+      gameRef.current = newGame;
+      setGame(newGame);
+    }
+  };
+
 
 const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
     // Immediately reflect own writes (Supabase realtime doesn't echo back to writer)
-    if (updates.game !== undefined) setGame({ ...updates.game });
+    if (updates.game !== undefined) setGameAndRef({ ...updates.game });
     if (updates.players !== undefined || updates.state !== undefined || updates.host_id !== undefined) {
       setRoom(r => r ? { ...r, ...updates } : r);
     }
@@ -373,7 +383,7 @@ const updateRoom = async (roomId, updates) => {
           .then(({ data, error }) => {
             if (!error && data && data.players.find(p => p.id === pid)) {
               setRoom(data);
-              setGame(data.game);
+              setGameAndRef(data.game);
               setPlayerId(pid);
               setScreen(data.state === 'game' ? 'game' : 'lobby');
             } else {
@@ -402,7 +412,7 @@ const updateRoom = async (roomId, updates) => {
     if (subRef.current) subRef.current.unsubscribe();
     subRef.current = subscribeToRoom(room.id, (updated) => {
       setRoom(updated);
-      if (updated.game !== undefined) setGame(updated.game);
+      if (updated.game !== undefined) setGameAndRef(updated.game);
       if (updated.state === 'game' && updated.game) setScreen('game');
     });
     return () => { if (subRef.current) subRef.current.unsubscribe(); };
@@ -414,7 +424,7 @@ const updateRoom = async (roomId, updates) => {
     setLoading(true); setError('');
     try {
       const { room: r, playerId: pid } = await createRoom(playerName.trim());
-      setRoom(r); setGame(r.game); setPlayerId(pid); setScreen('lobby');
+      setRoom(r); setGameAndRef(r.game); setPlayerId(pid); setScreen('lobby');
       localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -426,7 +436,7 @@ const updateRoom = async (roomId, updates) => {
     setLoading(true); setError('');
     try {
       const { room: r, playerId: pid } = await joinRoom(joinCode, playerName.trim());
-      setRoom(r); setGame(r.game); setPlayerId(pid); setScreen('lobby');
+      setRoom(r); setGameAndRef(r.game); setPlayerId(pid); setScreen('lobby');
       localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -470,7 +480,7 @@ const updateRoom = async (roomId, updates) => {
       roundNum: 1,
     };
     await updateRoom(room.id, { state: 'game', game: initialGame });
-      setGame(initialGame);
+      setGameAndRef(initialGame);
       setRoom(r => r ? { ...r, state: 'game', game: initialGame } : r);
   };
 
@@ -525,9 +535,9 @@ const updateRoom = async (roomId, updates) => {
       const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
       const g = freshRoom?.game;
       if (!g || g.dealComplete || g.phase !== 'dealing') return;
-      // Check all-pass mid-deal
+      // Check all-pass mid-deal (only if no trump declared yet)
       const midConfirmed = g.trumpConfirmed || [];
-      if (midConfirmed.length >= 4) {
+      if (!g.trumpDeclaration && midConfirmed.length >= 4) {
         let resolvedSuit = null;
         for (const card of (g.kitty || [])) {
           if (card.rank === g.trumpNumber && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
@@ -537,25 +547,26 @@ const updateRoom = async (roomId, updates) => {
         const midPassGame = { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
           log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}.`] };
         await updateRoomRemote(room.id, { game: midPassGame });
-        setGame({ ...midPassGame });
+        setGameAndRef({ ...midPassGame });
         return;
       }
 
       // All cards dealt?
       if (g.dealIndex >= (g.dealSequence?.length || 0)) {
         if (g.trumpDeclaration) {
-          // Check if all non-declarers have passed (or if nobody needs to pass)
+          // If locked (3+ cards), finalize immediately — no passes needed
+          // If not locked, wait for all non-declarers to pass
           const declarerSeat = g.trumpDeclaration.playerIdx;
           const confirmed = g.trumpConfirmed || [];
           const nonDeclarers = [0,1,2,3].filter(s => s !== declarerSeat);
-          const allPassed = nonDeclarers.every(s => confirmed.includes(s));
+          const allPassed = g.trumpDeclaration.locked || nonDeclarers.every(s => confirmed.includes(s));
           if (allPassed && !g.dealComplete) {
             const kittyHolder = g.roundNum === 1
               ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
               : (g.firstCardSeat ?? 0);
             const finalGame = { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true };
             await updateRoomRemote(room.id, { game: finalGame });
-            setGame({ ...finalGame });
+            setGameAndRef({ ...finalGame });
           }
         } else {
           // No trump declared — check if all 4 passed
@@ -570,29 +581,30 @@ const updateRoom = async (roomId, updates) => {
             const finalGame = { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
               log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}.`] };
             await updateRoomRemote(room.id, { game: finalGame });
-            setGame({ ...finalGame });
+            setGameAndRef({ ...finalGame });
           }
         }
         // Not ready yet — wait for passes (deps include trumpConfirmed.length so will re-run)
         return;
       }
 
-      // Deal next card — check index hasn't changed
-      if (g.dealIndex === lastDealtIndexRef.current) return;
-      lastDealtIndexRef.current = g.dealIndex;
-      const seq = g.dealSequence;
-      const { seat, card } = seq[g.dealIndex];
-      const newHands = g.hands.map((h, i) => i === seat ? [...h, card] : h);
-      const dealtGame = { ...g, hands: newHands, dealIndex: g.dealIndex + 1,
-        firstCardSeat: g.dealIndex === 0 ? seat : g.firstCardSeat,
-        firstCardSuit: g.dealIndex === 0 ? card.suit : g.firstCardSuit,
+      // Deal next card — second fresh fetch right before write to prevent double-deals
+      const { data: preWrite } = await supabase.from('rooms').select('game').eq('id', room.id).single();
+      const pg = preWrite?.game;
+      if (!pg || pg.dealIndex !== g.dealIndex) return; // already dealt by another timer fire
+      const seq = pg.dealSequence;
+      const { seat, card } = seq[pg.dealIndex];
+      const newHands = pg.hands.map((h, i) => i === seat ? [...h, card] : h);
+      const dealtGame = { ...pg, hands: newHands, dealIndex: pg.dealIndex + 1,
+        firstCardSeat: pg.dealIndex === 0 ? seat : pg.firstCardSeat,
+        firstCardSuit: pg.dealIndex === 0 ? card.suit : pg.firstCardSuit,
       };
       await updateRoomRemote(room.id, { game: dealtGame });
-      setGame({ ...dealtGame });
+      setGameAndRef({ ...dealtGame });
     }, 250);
 
     return () => clearTimeout(dealTimerRef.current);
-  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length]);
+  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length, !!game?.trumpDeclaration, game?.trumpDeclaration?.locked]);
 
   const toggleCard = (cardId) => {
     setSelectedIds(prev =>
@@ -1176,7 +1188,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
 
 
           {/* Pass block for when someone has declared — non-declarers must pass */}
-          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpDeclaration && (() => {
+          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpDeclaration && !game.trumpDeclaration.locked && (() => {
             const confirmed = game.trumpConfirmed || [];
             const declarerSeat = game.trumpDeclaration.playerIdx;
             const iNeedToPass = mySeat !== declarerSeat && !confirmed.includes(mySeat);
