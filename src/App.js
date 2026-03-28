@@ -357,8 +357,7 @@ export default function App() {
     await updateRoomRemote(roomId, updates);
     if (updates.game !== undefined) {
       const ng = { ...updates.game };
-      console.log('[updateRoom] calling setGame, trumpSuit:', ng.trumpSuit, 'phase:', ng.phase);
-      setGame(ng);
+        setGame(ng);
     }
     if (updates.players !== undefined || updates.state !== undefined || updates.host_id !== undefined) {
       setRoom(r => r ? { ...r, ...updates } : r);
@@ -648,14 +647,11 @@ export default function App() {
     const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
     const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
     const iAmDeclarer = existingDecl?.playerIdx === mySeat;
-    console.log('[Declare] mySeat:', mySeat, 'existingDecl:', existingDecl?.playerIdx, 'trumpSuit:', freshGame.trumpSuit, 'cards:', selectedCards.map(c=>c.rank+c.suit));
 
-    console.log('[Declare] allJokers:', allJokers, 'existingDecl:', existingDecl?.playerIdx, 'existingDeclFull:', JSON.stringify(existingDecl), 'iAmDeclarer:', iAmDeclarer, 'mySeat:', mySeat, 'gameRef.trumpSuit:', gameRef.current.trumpSuit);
     // Validate cards: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
       if (!selectedCards.every(c => c.rank === freshGame.trumpNumber)) {
-        console.log('[Declare] rank mismatch - cards:', selectedCards.map(c=>c.rank), 'trumpNumber:', freshGame.trumpNumber);
-        return setError(`Must select ${freshGame.trumpNumber}s (the trump number) to declare trump`);
+            return setError(`Must select ${freshGame.trumpNumber}s (the trump number) to declare trump`);
       }
       if (!selectedCards.every(c => c.suit === selectedCards[0].suit)) {
         return setError('All selected cards must be the same suit');
@@ -670,18 +666,15 @@ export default function App() {
     // ── CASE 1: No existing declaration — fresh call (1+ cards ok) ──────────
     if (!existingDecl) {
       const isLocked = !allJokers && selectedCards.length >= 3;
-      console.log('[Declare] Case 1 - newSuit:', newSuit, 'isLocked:', isLocked, 'mySeat:', mySeat, 'room.id:', room?.id);
-      try {
+        try {
         await updateRoom(room.id, { game: {
           ...freshGame,
           trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
           trumpSuit: newSuit,
           log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
         }});
-        console.log('[Declare] updateRoom success');
-      } catch(e) {
-        console.error('[Declare] updateRoom FAILED:', e.message, e);
-        setError('Failed to declare: ' + e.message);
+          } catch(e) {
+            setError('Failed to declare: ' + e.message);
       }
       setSelectedIds([]);
       return;
@@ -785,11 +778,8 @@ export default function App() {
     if (isLeading && selectedCards.length > 1) {
       const newHand = myHand.filter(c => !selectedIds.includes(c.id));
       const newHands = (game.hands || [[],[],[],[]]).map((h, i) => i === mySeat ? newHand : h);
-      console.log('[Challenge] mySeat:', mySeat, 'played:', selectedCards.map(c=>c.rank+c.suit));
-      console.log('[Challenge] newHands sizes:', newHands.map((h,i) => `seat${i}:${h.length}`));
-      const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
-      console.log('[Challenge] result:', challengeResult ? `seat ${challengeResult.challengerSeat}` : 'none');
-      if (challengeResult) {
+          const challengeResult = findChallenger(mySeat, newHands, selectedCards, game.trumpSuit, game.trumpNumber);
+        if (challengeResult) {
         const { challengerSeat, components } = challengeResult;
         await updateRoom(room.id, {
           game: {
@@ -985,9 +975,6 @@ export default function App() {
         <LobbyScreen room={room} playerId={playerId} onStart={handleStartGame} onKick={handleKick} onClaimSeat={handleClaimSeat} onLeaveSeat={handleLeaveSeat} onLeave={handleLeave} />
       )}
 
-      {!restoring && screen === 'game' && game && (
-        <>{console.log('[RENDER] game.trumpSuit:', game?.trumpSuit, 'game.phase:', game?.phase) || null}</>
-      )}
       {!restoring && screen === 'game' && game && (
         <GameScreen
           game={game} room={room} mySeat={mySeat} myTeam={myTeam}
