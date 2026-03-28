@@ -342,15 +342,17 @@ export default function App() {
   // (Supabase realtime doesn't echo your own writes back)
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
-    if (updates.game !== undefined) {
-      setRoom(r => r ? { ...r, game: updates.game } : r);
-    }
-    if (updates.players !== undefined) {
-      setRoom(r => r ? { ...r, players: updates.players } : r);
-    }
-    if (updates.state !== undefined) {
-      setRoom(r => r ? { ...r, state: updates.state } : r);
-    }
+    // Immediately reflect changes locally (Supabase doesn't echo own writes)
+    setRoom(r => {
+      if (!r) return r;
+      const next = { ...r };
+      if (updates.game !== undefined) next.game = updates.game;
+      if (updates.players !== undefined) next.players = updates.players;
+      if (updates.state !== undefined) next.state = updates.state;
+      if (updates.host_id !== undefined) next.host_id = updates.host_id;
+      console.log('[setRoom] local update applied, trumpSuit:', next.game?.trumpSuit, 'phase:', next.game?.phase);
+      return next;
+    });
   };
   const [playerId, setPlayerId] = useState(null);
   const [restoring, setRestoring] = useState(true);
