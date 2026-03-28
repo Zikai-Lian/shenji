@@ -347,13 +347,7 @@ export default function App() {
   // Tracks the dealIndex we last wrote, so timer doesn't re-fire on own refetch
   const lastDealtIndexRef = useRef(-1);
 
-  // Get guaranteed-fresh game state from Supabase
-  const getFreshGame = async () => {
-    const { data } = await supabase.from('rooms').select('*').eq('id', room.id).single();
-    return { freshGame: data?.game, freshRoom: data };
-  };
-
-  const updateRoom = async (roomId, updates) => {
+const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
     // Immediately reflect own writes (Supabase realtime doesn't echo back to writer)
     if (updates.game !== undefined) setGame({ ...updates.game });
@@ -489,9 +483,8 @@ export default function App() {
   useEffect(() => {
     if (!game || game.phase !== 'trick_end' || mySeat !== 0) return;
     const timer = setTimeout(async () => {
-      // Fetch fresh state to avoid stale closure
-      const { data: tr } = await supabase.from('rooms').select('*').eq('id', room.id).single();
-      const g = tr?.game;
+      // Use gameRef for latest state
+      const g = gameRef.current;
       if (!g || g.phase !== 'trick_end') return;
       const winner = g.trickEndWinner;
       const log = g.trickEndLog || g.log;
@@ -640,176 +633,167 @@ export default function App() {
 
 
   const handleDeclareTrump = async () => {
-    if (freshDeclSelected.length === 0) return;
+    if (selectedIds.length === 0) return;
 
-    // Always fetch fresh game state to avoid stale closure issues
-    const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
-    const freshGame = freshRoom?.game;
-    if (!freshGame) return;
+    // Use current game state — deal timer uses fresh fetch so won't clobber us
+    const g = gameRef.current;
+    if (!g) return;
 
-    // Verify selected cards still exist in fresh hand
-    const freshDeclHand = freshGame.hands[mySeat] || [];
-    const freshDeclSelected = freshDeclHand.filter(c => selectedIds.includes(c.id));
-    if (freshDeclSelected.length === 0) return setError('Selected cards not found in hand');
-    const allJokers = freshDeclSelected.every(c => c.suit === 'JOKER');
-    const existingDecl = freshGame.trumpDeclaration;
-    const newSuit = getTrumpSuitFromDeclaration(freshDeclSelected);
+    // Build selected cards from current hand
+    const myCurrentHand = g.hands?.[mySeat] || [];
+    const declSelected = myCurrentHand.filter(card => selectedIds.includes(card.id));
+    if (declSelected.length === 0) return setError('Selected cards not in hand');
+
+    const allJokers = declSelected.every(c => c.suit === 'JOKER');
+    const existingDecl = g.trumpDeclaration;
+    const newSuit = getTrumpSuitFromDeclaration(declSelected);
     const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
-    const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
+    const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards?.length || 1) : 0;
     const iAmDeclarer = existingDecl?.playerIdx === mySeat;
 
-    // Validate cards: must be all trump number of same suit, or all same joker type
+    // Validate: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
-      if (!freshDeclSelected.every(c => c.rank === freshGame.trumpNumber)) {
-            return setError(`Must select ${freshGame.trumpNumber}s (the trump number) to declare trump`);
-      }
-      if (!freshDeclSelected.every(c => c.suit === selectedCards[0].suit)) {
+      if (!declSelected.every(c => c.rank === g.trumpNumber))
+        return setError(`Must select ${g.trumpNumber}s (the trump number) to declare trump`);
+      if (!declSelected.every(c => c.suit === declSelected[0].suit))
         return setError('All selected cards must be the same suit');
-      }
     } else {
-      const allBig = freshDeclSelected.every(c => c.rank === 'BIG');
-      const allSmall = freshDeclSelected.every(c => c.rank === 'SMALL');
+      const allBig = declSelected.every(c => c.rank === 'BIG');
+      const allSmall = declSelected.every(c => c.rank === 'SMALL');
       if (!allBig && !allSmall) return setError('Joker declaration must be all Big or all Small jokers');
-      if (freshDeclSelected.length < 2) return setError('Need at least 2 jokers to declare');
+      if (declSelected.length < 2) return setError('Need at least 2 jokers to declare');
     }
 
-    // ── CASE 1: No existing declaration — fresh call (1+ cards ok) ──────────
+    // ── CASE 1: No existing declaration ────────────────────────────────────
     if (!existingDecl) {
-      const isLocked = !allJokers && freshDeclSelected.length >= 3;
-        try {
-        await updateRoom(room.id, { game: {
-          ...freshGame,
-          trumpDeclaration: { cards: freshDeclSelected, playerIdx: mySeat, declarationCount: freshDeclSelected.length, locked: isLocked },
-          trumpSuit: newSuit,
-          log: [...(freshGame.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${freshDeclSelected.length} card${freshDeclSelected.length>1?'s':''}.`],
-        }});
-          } catch(e) {
-            setError('Failed to declare: ' + e.message);
-      }
-      setSelectedIds([]);
-      return;
-    }
-
-    // ── CASE 2: Locked — nobody can do anything ──────────────────────────────
-    if (existingDecl.locked) return setError('Trump is locked — cannot be changed');
-
-    // ── CASE 3: I am the declarer — REINFORCEMENT only (same suit, more cards) ─
-    if (iAmDeclarer) {
-      // Same player can only reinforce same suit — cannot switch suits
-      if (newSuit !== freshGame.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
-      if (allJokers) return setError('You already declared a suit — cannot switch to jokers');
-      const newCount = freshDeclSelected.length;
-      if (newCount <= currentCount) return setError(`Must play more than ${currentCount} card${currentCount>1?'s':''} to reinforce`);
-      const isLocked = newCount >= 3;
+      const isLocked = !allJokers && declSelected.length >= 3;
       await updateRoom(room.id, { game: {
-        ...freshGame,
-        trumpDeclaration: { ...existingDecl, cards: freshDeclSelected, declarationCount: newCount, locked: isLocked },
-        log: [...(freshGame.log || []), isLocked
-          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${freshGame.trumpNumber}s — locked!)`
-          : `${declName} reinforces ${newSuit} trump (${newCount} cards — needs ${newCount + 1} to override).`],
+        ...g,
+        trumpDeclaration: { cards: declSelected, playerIdx: mySeat, declarationCount: declSelected.length, locked: isLocked },
+        trumpSuit: newSuit,
+        log: [...(g.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers)'} with ${declSelected.length} card${declSelected.length>1?'s':''}.`],
       }});
       setSelectedIds([]);
       return;
     }
 
-    // ── CASE 4: Opponent override — must strictly beat current count ─────────
-    if (freshDeclSelected.length <= currentCount) {
-      return setError(`Need more than ${currentCount} card${currentCount>1?'s':''} to override current declaration`);
+    // ── CASE 2: Locked ──────────────────────────────────────────────────────
+    if (existingDecl.locked) return setError('Trump is locked — cannot be changed');
+
+    // ── CASE 3: I am the declarer — reinforce only ─────────────────────────
+    if (iAmDeclarer) {
+      if (newSuit !== g.trumpSuit) return setError('You can only reinforce the same suit');
+      if (allJokers) return setError('Cannot switch to jokers after declaring a suit');
+      const newCount = declSelected.length;
+      if (newCount <= currentCount) return setError(`Must show more than ${currentCount} card${currentCount>1?'s':''} to reinforce`);
+      const isLocked = newCount >= 3;
+      await updateRoom(room.id, { game: {
+        ...g,
+        trumpDeclaration: { ...existingDecl, cards: declSelected, declarationCount: newCount, locked: isLocked },
+        log: [...(g.log || []), isLocked
+          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} cards — locked!)`
+          : `${declName} reinforces ${newSuit} trump (now ${newCount} cards).`],
+      }});
+      setSelectedIds([]);
+      return;
     }
-    const isLocked = !allJokers && freshDeclSelected.length >= 3;
-    // Reset confirmed passes so overridden player gets their pass button back
-    const resetConfirmed = (freshGame.trumpConfirmed || []).filter(s => s === mySeat);
+
+    // ── CASE 4: Opponent override ───────────────────────────────────────────
+    if (declSelected.length <= currentCount)
+      return setError(`Need more than ${currentCount} card${currentCount>1?'s':''} to override`);
+    const isLocked = !allJokers && declSelected.length >= 3;
+    const resetConfirmed = (g.trumpConfirmed || []).filter(s => s === mySeat);
     await updateRoom(room.id, { game: {
-      ...freshGame,
-      trumpDeclaration: { cards: freshDeclSelected, playerIdx: mySeat, declarationCount: freshDeclSelected.length, locked: isLocked },
+      ...g,
+      trumpDeclaration: { cards: declSelected, playerIdx: mySeat, declarationCount: declSelected.length, locked: isLocked },
       trumpSuit: newSuit,
       trumpConfirmed: resetConfirmed,
-      log: [...(freshGame.log || []), isLocked
-        ? `${declName} overrides and locks in ${newSuit} as trump with ${freshDeclSelected.length} ${freshGame.trumpNumber}s!`
-        : `${declName} overrides trump${newSuit ? ` → ${newSuit}` : ' → jokers'} with ${freshDeclSelected.length} cards.`],
+      log: [...(g.log || []), isLocked
+        ? `${declName} overrides and locks in ${newSuit} as trump with ${declSelected.length} cards!`
+        : `${declName} overrides trump${newSuit ? ` → ${newSuit}` : ' → jokers'} with ${declSelected.length} cards.`],
     }});
     setSelectedIds([]);
   };
 
 
   const handleConfirmPass = async () => {
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    if (!game) return;
-    const confirmed = freshGame.trumpConfirmed || [];
-    if (confirmed.includes(mySeat)) return; // already confirmed
-    await updateRoom(room.id, { game: { ...freshGame, trumpConfirmed: [...confirmed, mySeat] } });
+    const g = gameRef.current;
+    if (!g) return;
+    const confirmed = g.trumpConfirmed || [];
+    if (confirmed.includes(mySeat)) return;
+    await updateRoom(room.id, { game: { ...g, trumpConfirmed: [...confirmed, mySeat] } });
   };
 
+  
   const handleTakeKitty = async () => {
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    // Derive kittyHolder in case it hasn't been written yet by host timer
-    const effectiveKittyHolder = freshGame.kittyHolder ??
-      (freshGame.roundNum === 1
-        ? (freshGame.trumpDeclaration?.playerIdx ?? freshGame.firstCardSeat ?? 0)
-        : (freshGame.firstCardSeat ?? 0));
+    const g = gameRef.current;
+    if (!g) return;
+    const effectiveKittyHolder = g.kittyHolder ??
+      (g.roundNum === 1
+        ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
+        : (g.firstCardSeat ?? 0));
     if (mySeat !== effectiveKittyHolder) return;
-    const freshHand = freshGame.hands[mySeat] || [];
-    const newHand = [...freshHand, ...(freshGame.kitty || [])];
-    const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
-    await updateRoom(room.id, { game: { ...freshGame, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
+    const myCurrentHand = g.hands?.[mySeat] || [];
+    const newHand = [...myCurrentHand, ...(g.kitty || [])];
+    const newHands = g.hands.map((h, i) => i === mySeat ? newHand : h);
+    await updateRoom(room.id, { game: { ...g, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
     setSelectedIds([]);
   };
 
+  
   const handleDiscardKitty = async () => {
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    if (mySeat !== freshGame.kittyHolder) return;
+    const g = gameRef.current;
+    if (!g) return;
+    if (mySeat !== (g.kittyHolder ?? g.trumpDeclaration?.playerIdx)) return;
     if (selectedIds.length !== 6) return setError('Select exactly 6 cards to discard');
-    // Build discarded cards from freshGame hand to avoid stale myHand
-    const freshHand = freshGame.hands[mySeat] || [];
-    const discarded = freshHand.filter(c => selectedIds.includes(c.id));
-    if (discarded.length !== 6) {
-      console.log('[Discard] selectedIds:', selectedIds.length, 'freshHand size:', freshHand.length, 'matched:', discarded.length);
-      return setError(`Select exactly 6 cards to discard (found ${discarded.length} of ${selectedIds.length} selected in hand)`);
-    }
-    const newHand = freshHand.filter(c => !selectedIds.includes(c.id));
-    const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
+    const myCurrentHand = g.hands?.[mySeat] || [];
+    const discarded = myCurrentHand.filter(card => selectedIds.includes(card.id));
+    if (discarded.length !== 6) return setError(`Select exactly 6 cards to discard (matched ${discarded.length})`);
+    const newHand = myCurrentHand.filter(card => !selectedIds.includes(card.id));
+    const newHands = g.hands.map((h, i) => i === mySeat ? newHand : h);
+    const playerName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
     await updateRoom(room.id, {
-      game: { ...freshGame, phase: 'playing', hands: newHands, kitty: discarded, currentTurn: freshGame.kittyHolder, log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
+      game: { ...g, phase: 'playing', hands: newHands, kitty: discarded,
+        currentTurn: g.kittyHolder ?? g.trumpDeclaration?.playerIdx ?? mySeat,
+        scores: g.scores || [0, 0],
+        currentTrick: [],
+        log: [...(g.log || []), `${playerName} discarded kitty.`] }
     });
     setSelectedIds([]);
   };
 
+  
   const handlePlayCards = async () => {
     if (selectedIds.length === 0) return setError('Select cards to play');
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    if (freshGame.currentTurn !== mySeat) return setError('Not your turn');
-    // Build selected cards from fresh hand to avoid stale myHand
-    const freshHand = freshGame.hands[mySeat] || [];
-    const freshSelected = freshHand.filter(c => selectedIds.includes(c.id));
-    if (freshSelected.length === 0) return setError('Select cards to play');
+    const g = gameRef.current;
+    if (!g) return;
+    if (g.currentTurn !== mySeat) return setError('Not your turn');
+    const myCurrentHand = g.hands?.[mySeat] || [];
+    const freshSelected = myCurrentHand.filter(card => selectedIds.includes(card.id));
+    if (freshSelected.length === 0) return setError('Selected cards not found in hand');
 
-    const combo = detectCombo(freshSelected, freshGame.trumpSuit, freshGame.trumpNumber);
+    const combo = detectCombo(freshSelected, g.trumpSuit, g.trumpNumber);
     if (!combo.valid) return setError('Invalid combo');
 
-    const isLeading = freshGame.currentTrick.length === 0;
+    const isLeading = (g.currentTrick || []).length === 0;
 
     if (!isLeading) {
-      const leadPlay = freshGame.currentTrick[0];
-      const leadCombo = detectCombo(leadPlay.cards, freshGame.trumpSuit, freshGame.trumpNumber);
-      const freshHandForValidation = freshGame.hands[mySeat] || [];
-      const followErr = validateFollow(freshSelected, freshHandForValidation, { ...leadCombo, cards: leadPlay.cards }, freshGame.trumpSuit, freshGame.trumpNumber);
+      const leadPlay = g.currentTrick[0];
+      const leadCombo = detectCombo(leadPlay.cards, g.trumpSuit, g.trumpNumber);
+      const followErr = validateFollow(freshSelected, myCurrentHand, { ...leadCombo, cards: leadPlay.cards }, g.trumpSuit, g.trumpNumber);
       if (followErr) return setError(followErr);
     }
 
-    // If leading with multiple cards, auto-detect if anyone must challenge
+    // Challenge detection
     if (isLeading && freshSelected.length > 1) {
-      const newHand = freshHand.filter(c => !selectedIds.includes(c.id));
-      const newHands = (freshGame.hands || [[],[],[],[]]).map((h, i) => i === mySeat ? newHand : h);
-      const challengeResult = findChallenger(mySeat, newHands, freshSelected, freshGame.trumpSuit, freshGame.trumpNumber);
+      const newHand = myCurrentHand.filter(card => !selectedIds.includes(card.id));
+      const newHands = g.hands.map((h, i) => i === mySeat ? newHand : h);
+      const challengeResult = findChallenger(mySeat, newHands, freshSelected, g.trumpSuit, g.trumpNumber);
       if (challengeResult) {
         const { challengerSeat, components, beatableComponents } = challengeResult;
         await updateRoom(room.id, {
           game: {
-            ...freshGame,
+            ...g,
             hands: newHands,
             phase: 'challenge',
             challenge: {
@@ -820,135 +804,127 @@ export default function App() {
               beatableComponents,
               challengerSeat,
             },
-            log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} leads ${freshSelected.length} cards — ${room.players.find(p => p.seat === challengerSeat)?.name} must challenge!`],
+            log: [...(g.log || []), `${room.players.find(p => p.seat === mySeat)?.name} leads ${freshSelected.length} cards — ${room.players.find(p => p.seat === challengerSeat)?.name} must challenge!`],
           }
         });
         setSelectedIds([]);
         return;
       }
-      // Nobody can challenge — commit play directly
     }
 
-    await commitPlay(freshSelected, isLeading);
-  };
-
-  // Challenger picks which sub-combo the leader must keep
-  const handleChallenge = async (keptCombo) => {
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    if (!freshGame.challenge) return;
-    if (freshGame.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
-    if (keptCombo.length === 0) return setError("Select which cards the leader must keep");
-
-    const { leaderSeat, playedCards } = freshGame.challenge;
-    const keptIds = new Set(keptCombo.map(c => c.id));
-    const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
-    const leaderHand = [...(freshGame.hands[leaderSeat] || []), ...returnedCards];
-    const newHands = freshGame.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
-
-    await updateRoom(room.id, {
-      game: {
-        ...freshGame,
-        hands: newHands,
-        phase: 'playing',
-        challenge: null,
-        currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players.find(p => p.seat === leaderSeat).name }],
-        currentTurn: (leaderSeat + 1) % 4,
-        log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
-      }
-    });
+    await commitPlay(freshSelected, isLeading, g);
     setSelectedIds([]);
   };
 
+  
+  const handleChallenge = async (keptCombo) => {
+    const g = gameRef.current;
+    if (!g?.challenge) return;
+    if (g.challenge.challengerSeat !== mySeat) return setError('Not your turn to challenge');
+    if (keptCombo.length === 0) return setError('Select which cards the leader must keep');
+
+    const { leaderSeat, playedCards } = g.challenge;
+    const keptIds = new Set(keptCombo.map(c => c.id));
+    const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
+    const leaderHand = [...(g.hands[leaderSeat] || []), ...returnedCards];
+    const newHands = g.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
+    const playerName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
+    const leaderName = room.players.find(p => p.seat === leaderSeat)?.name || `Seat ${leaderSeat+1}`;
+
+    await updateRoom(room.id, { game: {
+      ...g,
+      hands: newHands,
+      phase: 'playing',
+      challenge: null,
+      currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: leaderName }],
+      currentTurn: (leaderSeat + 1) % 4,
+      log: [...(g.log || []), `${playerName} challenges! ${leaderName} must play ${keptCombo.length} card${keptCombo.length>1?'s':''}.`],
+    }});
+    setSelectedIds([]);
+  };
+
+  
   const handlePassChallenge = async () => {}; // kept for compatibility, not used
 
-  const commitPlay = async (cards, isLeading) => {
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    const freshHand = freshGame.hands[mySeat] || [];
-    const newHand = freshHand.filter(c => !cards.map(c=>c.id).includes(c.id));
-    const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
-    const newTrick = [...(freshGame.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
+  const commitPlay = async (cards, isLeading, g) => {
+    if (!g) g = gameRef.current;
+    if (!g) return;
+    const myCurrentHand = g.hands?.[mySeat] || [];
+    const newHand = myCurrentHand.filter(card => !cards.map(c=>c.id).includes(card.id));
+    const newHands = g.hands.map((h, i) => i === mySeat ? newHand : h);
+    const playerName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
+    const newTrick = [...(g.currentTrick || []), { playerIdx: mySeat, cards, playerName }];
 
-    let newGame = { ...freshGame, hands: newHands, currentTrick: newTrick };
+    let newGame = { ...g, hands: newHands, currentTrick: newTrick };
 
     if (newTrick.length === 4) {
-      const winner = trickWinner(newTrick, freshGame.trumpSuit, freshGame.trumpNumber);
+      const winner = trickWinner(newTrick, g.trumpSuit, g.trumpNumber);
       const trickPoints = newTrick.flatMap(p => p.cards).reduce((s, c) => s + cardPoints(c), 0);
       const winnerTeam = winner % 2;
-      const newScores = [...freshGame.scores];
+      const newScores = [...(g.scores || [0,0])];
       newScores[winnerTeam] += trickPoints;
-      const newTricks = [...(freshGame.tricks || []), { plays: newTrick, winner, points: trickPoints }];
-      const log = [...(freshGame.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
-      // Show completed trick for 2 seconds before clearing (host drives timer)
-      newGame = { ...newGame, hands: newHands, currentTrick: newTrick, tricks: newTricks,
-        scores: newScores, phase: 'trick_end', trickEndWinner: winner, trickEndLog: log, log };
+      const newTricks = [...(g.tricks || []), { plays: newTrick, winner, points: trickPoints }];
+      const log = [...(g.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
+      newGame = { ...newGame, tricks: newTricks, scores: newScores,
+        phase: 'trick_end', trickEndWinner: winner, trickEndLog: log, log };
     } else {
       newGame.currentTurn = (mySeat + 1) % 4;
     }
 
     await updateRoom(room.id, { game: newGame });
-    setSelectedIds([]);
   };
 
-
+  
   const handleNextRound = async () => {
-    const { freshGame, freshRoom } = await getFreshGame();
-    if (!freshGame) return;
-    const r = freshGame.roundResult;
-    const newLevels = [...freshGame.levels];
+    const g = gameRef.current;
+    if (!g?.roundResult) return;
+    const r = g.roundResult;
+    const newLevels = [...(g.levels || [0,0])];
     const newAttacking = r.defScore >= 120
-      ? 1 - freshGame.attackingTeam  // defenders win, switch
-      : freshGame.attackingTeam;
+      ? 1 - g.attackingTeam
+      : g.attackingTeam;
 
     if (r.defScore >= 120) {
-      newLevels[1 - freshGame.attackingTeam] = Math.max(0, (newLevels[1 - freshGame.attackingTeam] || 0) + Math.max(0, r.defGain));
+      newLevels[1 - g.attackingTeam] = Math.min(
+        LEVELS.length - 1,
+        (newLevels[1 - g.attackingTeam] || 0) + Math.max(0, r.defGain || 0)
+      );
     } else {
-      newLevels[freshGame.attackingTeam] = Math.min(12, (newLevels[freshGame.attackingTeam] || 0) + r.atkGain);
-    }
-
-    // Check win
-    if (newLevels[0] > 12 || newLevels[1] > 12) {
-      await updateRoom(room.id, { game: { ...freshGame, phase: 'game_over', levels: newLevels } });
-      return;
+      newLevels[g.attackingTeam] = Math.min(
+        LEVELS.length - 1,
+        (newLevels[g.attackingTeam] || 0) + Math.max(0, r.atkGain || 0)
+      );
     }
 
     const decks = buildDecks();
     const { sequence, kitty } = dealCardsSequential(decks);
-    // For round 2+, kittyHolder is whoever gets dealt the first card (resolved after dealing)
-    const firstCardSeat = sequence[0]?.seat ?? 0;
-
-    await updateRoom(room.id, {
-      game: {
-        ...freshGame,
-        phase: 'dealing',
-        hands: [[], [], [], []],
-        dealSequence: sequence,
-        dealIndex: 0,
-        dealComplete: false,
-        trumpConfirmed: [],
-        firstCardSuit: sequence[0]?.card?.suit || '♠',
-        firstCardSeat,
-        kitty,
-        kittyHolder: null,           // resolved after dealing completes
-        trumpDeclaration: null,
-        trumpSuit: null,
-        trumpNumber: LEVELS[newLevels[newAttacking]],
-        currentTrick: [],
-        tricks: [],
-        scores: [0, 0],
-        levels: newLevels,
-        attackingTeam: newAttacking,
-        currentTurn: firstCardSeat,
-        selectedCards: [[], [], [], []],
-        log: [`Round ${freshGame.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
-        roundNum: (freshGame.roundNum || 1) + 1,
-        roundResult: null,
-      }
-    });
+    const initialGame = {
+      phase: 'dealing',
+      hands: [[], [], [], []],
+      dealSequence: sequence,
+      dealIndex: 0,
+      dealComplete: false,
+      trumpConfirmed: [],
+      kitty,
+      kittyHolder: null,
+      trumpDeclaration: null,
+      trumpSuit: null,
+      trumpNumber: LEVELS[newLevels[newAttacking]],
+      scores: [0, 0],
+      tricks: [],
+      currentTrick: [],
+      currentTurn: 0,
+      attackingTeam: newAttacking,
+      levels: newLevels,
+      roundNum: (g.roundNum || 1) + 1,
+      firstCardSeat: null,
+      firstCardSuit: null,
+      log: [`Round ${(g.roundNum || 1) + 1} — Team ${newAttacking === 0 ? 'A' : 'B'} attacks at level ${LEVELS[newLevels[newAttacking]]}`],
+    };
+    await updateRoom(room.id, { game: initialGame });
   };
 
-  // ── Sort hand ────────────────────────────────────────────────────────────
+  
   const SUIT_ORDER = ['♠', '♥', '♣', '♦'];
   const sortedHand = [...(myHand || [])].sort((a, b) => {
     if (!game) return 0;
