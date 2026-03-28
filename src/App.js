@@ -132,7 +132,7 @@ function PlayingCard({ card, selected, onClick, small }) {
   const w = small ? 40 : 64;
   const h = small ? 56 : 92;
   const fs = small ? 9 : 13;
-  const marginLeft = selected ? (small ? -10 : -14) : (small ? -12 : -20);
+  const marginLeft = 0;
 
   const PIP_LAYOUTS = {
     'A':  [[0.5,0.5,false]],
@@ -697,10 +697,15 @@ export default function App() {
   };
 
   const handleTakeKitty = async () => {
-    if (mySeat !== game.kittyHolder) return;
+    // Derive kittyHolder in case it hasn't been written yet by host timer
+    const effectiveKittyHolder = game.kittyHolder ??
+      (game.roundNum === 1
+        ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
+        : (game.firstCardSeat ?? 0));
+    if (mySeat !== effectiveKittyHolder) return;
     const newHand = [...myHand, ...game.kitty];
     const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    await updateRoom(room.id, { game: { ...game, phase: 'kitty', hands: newHands, kitty: [] } });
+    await updateRoom(room.id, { game: { ...game, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
   };
 
   const handleDiscardKitty = async () => {
@@ -949,7 +954,11 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
   const isMyTurn = game.currentTurn === mySeat && phase !== 'trick_end';
   useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
 
-  const isKittyHolder = game.kittyHolder === mySeat;
+  const effectiveKittyHolder = game.kittyHolder ??
+    (game.roundNum === 1
+      ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
+      : (game.firstCardSeat ?? 0));
+  const isKittyHolder = effectiveKittyHolder === mySeat;
   const attackTeamName = `Team ${game.attackingTeam === 0 ? 'A' : 'B'}`;
   const myTeamAttacking = myTeam === game.attackingTeam;
 
@@ -1052,7 +1061,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           </button>
 
           {/* Pass button — only shown after dealing is complete, to players who haven't passed */}
-          {game.dealComplete && (() => {
+          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && (() => {
             const confirmed = game.trumpConfirmed || [];
             const decl = game.trumpDeclaration;
             // Who needs to pass:
@@ -1095,7 +1104,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           })()}
 
           {/* Take kitty — only after all passed AND trump is set */}
-          {game.dealComplete && game.trumpSuit && (() => {
+          {(game.dealComplete || game.dealIndex >= (game.dealSequence?.length || 156)) && game.trumpSuit && (() => {
             const confirmed = game.trumpConfirmed || [];
             const decl = game.trumpDeclaration;
             const declarerSeat = decl?.playerIdx ?? -1;
@@ -1262,7 +1271,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           return groups.map(({ label, cards, color }) => (
             <div key={label} style={{ marginBottom: '6px' }}>
               <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
-              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '24px 8px 8px 8px', gap: '0px', WebkitOverflowScrolling: 'touch', overflowY: 'visible' }}>
+              <div style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', padding: '24px 12px 8px 12px', gap: '4px', WebkitOverflowScrolling: 'touch', overflowY: 'visible' }}>
                 {cards.map(card => (
                   <PlayingCard key={card.id} card={card}
                     selected={selectedIds.includes(card.id)}
