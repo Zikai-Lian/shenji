@@ -483,8 +483,8 @@ const updateRoom = async (roomId, updates) => {
   useEffect(() => {
     if (!game || game.phase !== 'trick_end' || mySeat !== 0) return;
     const timer = setTimeout(async () => {
-      // Use gameRef for latest state
-      const g = gameRef.current;
+      // Use game directly from closure (captured when useEffect ran, which is correct)
+      const g = game;
       if (!g || g.phase !== 'trick_end') return;
       const winner = g.trickEndWinner;
       const log = g.trickEndLog || g.log;
@@ -510,7 +510,7 @@ const updateRoom = async (roomId, updates) => {
           roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
           log: [...log, `Round over! Defenders scored ${defScore} pts.`] } });
       } else {
-        await updateRoom(room.id, { game: { ...g, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
+        await updateRoom(room.id, { game: { ...g, currentTrick: [], tricks: newTricks, currentTurn: winner, phase: 'playing', scores: newScores, log } });
       }
     }, 2000);
     return () => clearTimeout(timer);
@@ -543,16 +543,37 @@ const updateRoom = async (roomId, updates) => {
 
       // All cards dealt?
       if (g.dealIndex >= (g.dealSequence?.length || 0)) {
-        // Finalize if trump declared (includes joker declarations where trumpSuit is null)
         if (g.trumpDeclaration) {
-          const kittyHolder = g.roundNum === 1
-            ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
-            : (g.firstCardSeat ?? 0);
-          const finalGame = { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true };
-          await updateRoomRemote(room.id, { game: finalGame });
-          setGame({ ...finalGame });
+          // Check if all non-declarers have passed (or if nobody needs to pass)
+          const declarerSeat = g.trumpDeclaration.playerIdx;
+          const confirmed = g.trumpConfirmed || [];
+          const nonDeclarers = [0,1,2,3].filter(s => s !== declarerSeat);
+          const allPassed = nonDeclarers.every(s => confirmed.includes(s));
+          if (allPassed && !g.dealComplete) {
+            const kittyHolder = g.roundNum === 1
+              ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
+              : (g.firstCardSeat ?? 0);
+            const finalGame = { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true };
+            await updateRoomRemote(room.id, { game: finalGame });
+            setGame({ ...finalGame });
+          }
+        } else {
+          // No trump declared — check if all 4 passed
+          const confirmed = g.trumpConfirmed || [];
+          if (confirmed.length >= 4 && !g.dealComplete) {
+            let resolvedSuit = null;
+            for (const card of (g.kitty || [])) {
+              if (card.rank === g.trumpNumber && card.suit !== 'JOKER') { resolvedSuit = card.suit; break; }
+            }
+            if (!resolvedSuit) resolvedSuit = g.firstCardSuit || '♠';
+            const kittyHolder = g.firstCardSeat ?? 0;
+            const finalGame = { ...g, trumpSuit: resolvedSuit, kittyHolder, currentTurn: kittyHolder, dealComplete: true,
+              log: [...(g.log||[]), `All players passed — trump auto-set to ${resolvedSuit}.`] };
+            await updateRoomRemote(room.id, { game: finalGame });
+            setGame({ ...finalGame });
+          }
         }
-        // else wait for passes — UI handles it
+        // Not ready yet — wait for passes (deps include trumpConfirmed.length so will re-run)
         return;
       }
 
@@ -571,7 +592,7 @@ const updateRoom = async (roomId, updates) => {
     }, 250);
 
     return () => clearTimeout(dealTimerRef.current);
-  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpDeclaration]);
+  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length]);
 
   const toggleCard = (cardId) => {
     setSelectedIds(prev =>
@@ -836,6 +857,7 @@ const updateRoom = async (roomId, updates) => {
       hands: newHands,
       phase: 'playing',
       challenge: null,
+      scores: g.scores || [0,0],
       currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: leaderName }],
       currentTurn: (leaderSeat + 1) % 4,
       log: [...(g.log || []), `${playerName} challenges! ${leaderName} must play ${keptCombo.length} card${keptCombo.length>1?'s':''}.`],
@@ -1001,7 +1023,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
   const [selectedCompIdx, setSelectedCompIdx] = useState(null);
   const phase = game?.phase;
   const isMyTurn = game.currentTurn === mySeat && (phase === 'playing' || phase === 'trick_end');
-  const canPlay = game.currentTurn === mySeat && phase === 'playing';
+  const canPlay = (game.currentTurn === mySeat || game.currentTurn == null) && phase === 'playing';
   useEffect(() => { if (game.phase !== 'challenge') setSelectedCompIdx(null); }, [game.phase]);
 
   const effectiveKittyHolder = game.kittyHolder ??
