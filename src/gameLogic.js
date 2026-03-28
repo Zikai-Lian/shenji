@@ -796,13 +796,14 @@ export function findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpN
   const order = [(leaderSeat + 1) % 4, (leaderSeat + 2) % 4, (leaderSeat + 3) % 4];
   for (const seat of order) {
     const hand = hands[seat] || [];
-    for (const comp of components) {
-      const canBeat = canBeatComponent(hand, comp, trumpSuit, trumpNumber);
-      console.log(`[Challenge check] seat ${seat} vs ${comp.type}(${comp.cards.map(c=>c.rank+c.suit).join(',')}): canBeat=${canBeat}, handSize=${hand.length}`);
-      if (canBeat) {
-        console.log(`[Challenge] seat ${seat} MUST challenge`);
-        return { challengerSeat: seat, components };
-      }
+    // Find which components this player can beat
+    const beatableComponents = components.filter(comp =>
+      canBeatComponent(hand, comp, trumpSuit, trumpNumber)
+    );
+    if (beatableComponents.length > 0) {
+      // Challenger must force leader to keep one of the beatable components
+      // (they pick which beatable component stays — the others go back to leader's hand)
+      return { challengerSeat: seat, components, beatableComponents };
     }
   }
   return null;
