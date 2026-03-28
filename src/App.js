@@ -340,15 +340,18 @@ export default function App() {
 
   // Wrapper: write to Supabase AND update local state immediately
   // (Supabase realtime doesn't echo your own writes back)
+  // gameRef always holds latest game state to avoid stale closures
+  const gameRef = useRef(game);
+  useEffect(() => { gameRef.current = game; }, [game]);
+
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
-    // Update local state immediately so the writer sees their own changes
-    // Use functional update to merge cleanly without triggering extra renders
+    // Immediately update local state so writer sees own changes
     setRoom(r => {
       if (!r) return r;
       const next = { ...r };
-      if (updates.game !== undefined) next.game = { ...updates.game };
-      if (updates.players !== undefined) next.players = [...updates.players];
+      if (updates.game !== undefined) next.game = updates.game;
+      if (updates.players !== undefined) next.players = updates.players;
       if (updates.state !== undefined) next.state = updates.state;
       if (updates.host_id !== undefined) next.host_id = updates.host_id;
       return next;
@@ -497,12 +500,12 @@ export default function App() {
         const defScore = finalScores[1 - game.attackingTeam];
         const atkGain = attackerLevelGain(defScore);
         const defGain = defenderLevelGain(defScore);
-        await updateRoom(room.id, { game: { ...game, currentTrick: [], scores: finalScores,
+        await updateRoom(room.id, { game: { ...gameRef.current, currentTrick: [], scores: finalScores,
           phase: 'round_end',
           roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
           log: [...log, `Round over! Defenders scored ${defScore} pts.`] } });
       } else {
-        await updateRoom(room.id, { game: { ...game, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
+        await updateRoom(room.id, { game: { ...gameRef.current, currentTrick: [], currentTurn: winner, phase: 'playing', log } });
       }
     }, 2000);
     return () => clearTimeout(timer);
@@ -643,7 +646,7 @@ export default function App() {
     }
 
     const allJokers = selectedCards.every(c => c.suit === 'JOKER');
-    const existingDecl = game.trumpDeclaration;
+    const existingDecl = gameRef.current.trumpDeclaration;
     const newSuit = getTrumpSuitFromDeclaration(selectedCards);
     const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
     const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
@@ -652,9 +655,9 @@ export default function App() {
     console.log('[Declare] allJokers:', allJokers, 'existingDecl:', existingDecl?.playerIdx, 'iAmDeclarer:', iAmDeclarer, 'mySeat:', mySeat);
     // Validate cards: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
-      if (!selectedCards.every(c => c.rank === game.trumpNumber)) {
-        console.log('[Declare] rank mismatch - cards:', selectedCards.map(c=>c.rank), 'trumpNumber:', game.trumpNumber);
-        return setError(`Must select ${game.trumpNumber}s (the trump number) to declare trump`);
+      if (!selectedCards.every(c => c.rank === gameRef.current.trumpNumber)) {
+        console.log('[Declare] rank mismatch - cards:', selectedCards.map(c=>c.rank), 'trumpNumber:', gameRef.current.trumpNumber);
+        return setError(`Must select ${gameRef.current.trumpNumber}s (the trump number) to declare trump`);
       }
       if (!selectedCards.every(c => c.suit === selectedCards[0].suit)) {
         return setError('All selected cards must be the same suit');
@@ -692,7 +695,7 @@ export default function App() {
     // ── CASE 3: I am the declarer — REINFORCEMENT only (same suit, more cards) ─
     if (iAmDeclarer) {
       // Same player can only reinforce same suit — cannot switch suits
-      if (newSuit !== game.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
+      if (newSuit !== gameRef.current.trumpSuit) return setError('You already declared — you can only reinforce the same suit, not switch');
       if (allJokers) return setError('You already declared a suit — cannot switch to jokers');
       const newCount = currentCount + selectedCards.length;
       if (newCount < currentCount + 1) return setError('Must add at least 1 more card to reinforce');
@@ -701,7 +704,7 @@ export default function App() {
         ...game,
         trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
         log: [...(game.log || []), isLocked
-          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${game.trumpNumber}s — locked!)`
+          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${gameRef.current.trumpNumber}s — locked!)`
           : `${declName} reinforces ${newSuit} trump (${newCount} cards — needs ${newCount + 1} to override).`],
       }});
       setSelectedIds([]);
@@ -721,7 +724,7 @@ export default function App() {
       trumpSuit: newSuit,
       trumpConfirmed: resetConfirmed,
       log: [...(game.log || []), isLocked
-        ? `${declName} overrides and locks in ${newSuit} as trump with ${selectedCards.length} ${game.trumpNumber}s!`
+        ? `${declName} overrides and locks in ${newSuit} as trump with ${selectedCards.length} ${gameRef.current.trumpNumber}s!`
         : `${declName} overrides trump${newSuit ? ` → ${newSuit}` : ' → jokers'} with ${selectedCards.length} cards.`],
     }});
     setSelectedIds([]);
@@ -730,30 +733,30 @@ export default function App() {
 
   const handleConfirmPass = async () => {
     if (!game) return;
-    const confirmed = game.trumpConfirmed || [];
+    const confirmed = gameRef.current.trumpConfirmed || [];
     if (confirmed.includes(mySeat)) return; // already confirmed
-    await updateRoom(room.id, { game: { ...game, trumpConfirmed: [...confirmed, mySeat] } });
+    await updateRoom(room.id, { game: { ...gameRef.current, trumpConfirmed: [...confirmed, mySeat] } });
   };
 
   const handleTakeKitty = async () => {
     // Derive kittyHolder in case it hasn't been written yet by host timer
-    const effectiveKittyHolder = game.kittyHolder ??
-      (game.roundNum === 1
-        ? (game.trumpDeclaration?.playerIdx ?? game.firstCardSeat ?? 0)
-        : (game.firstCardSeat ?? 0));
+    const effectiveKittyHolder = gameRef.current.kittyHolder ??
+      (gameRef.current.roundNum === 1
+        ? (gameRef.current.trumpDeclaration?.playerIdx ?? gameRef.current.firstCardSeat ?? 0)
+        : (gameRef.current.firstCardSeat ?? 0));
     if (mySeat !== effectiveKittyHolder) return;
-    const newHand = [...myHand, ...game.kitty];
-    const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    await updateRoom(room.id, { game: { ...game, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
+    const newHand = [...myHand, ...gameRef.current.kitty];
+    const newHands = gameRef.current.hands.map((h, i) => i === mySeat ? newHand : h);
+    await updateRoom(room.id, { game: { ...gameRef.current, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
   };
 
   const handleDiscardKitty = async () => {
-    if (mySeat !== game.kittyHolder) return;
+    if (mySeat !== gameRef.current.kittyHolder) return;
     if (selectedCards.length !== 6) return setError('Select exactly 6 cards to discard');
     const newHand = myHand.filter(c => !selectedIds.includes(c.id));
-    const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
+    const newHands = gameRef.current.hands.map((h, i) => i === mySeat ? newHand : h);
     await updateRoom(room.id, {
-      game: { ...game, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: game.kittyHolder, log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
+      game: { ...gameRef.current, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: gameRef.current.kittyHolder, log: [...(gameRef.current.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
     });
     setSelectedIds([]);
   };
@@ -810,15 +813,15 @@ export default function App() {
 
   // Challenger picks which sub-combo the leader must keep
   const handleChallenge = async (keptCombo) => {
-    if (!game.challenge) return;
-    if (game.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
+    if (!gameRef.current.challenge) return;
+    if (gameRef.current.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
     if (keptCombo.length === 0) return setError("Select which cards the leader must keep");
 
-    const { leaderSeat, playedCards } = game.challenge;
+    const { leaderSeat, playedCards } = gameRef.current.challenge;
     const keptIds = new Set(keptCombo.map(c => c.id));
     const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
-    const leaderHand = [...(game.hands[leaderSeat] || []), ...returnedCards];
-    const newHands = game.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
+    const leaderHand = [...(gameRef.current.hands[leaderSeat] || []), ...returnedCards];
+    const newHands = gameRef.current.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
 
     await updateRoom(room.id, {
       game: {
@@ -828,7 +831,7 @@ export default function App() {
         challenge: null,
         currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players.find(p => p.seat === leaderSeat).name }],
         currentTurn: (leaderSeat + 1) % 4,
-        log: [...(game.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
+        log: [...(gameRef.current.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
       }
     });
     setSelectedIds([]);
@@ -838,19 +841,19 @@ export default function App() {
 
   const commitPlay = async (cards, isLeading) => {
     const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
-    const newHands = game.hands.map((h, i) => i === mySeat ? newHand : h);
-    const newTrick = [...(game.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
+    const newHands = gameRef.current.hands.map((h, i) => i === mySeat ? newHand : h);
+    const newTrick = [...(gameRef.current.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
 
-    let newGame = { ...game, hands: newHands, currentTrick: newTrick };
+    let newGame = { ...gameRef.current, hands: newHands, currentTrick: newTrick };
 
     if (newTrick.length === 4) {
-      const winner = trickWinner(newTrick, game.trumpSuit, game.trumpNumber);
+      const winner = trickWinner(newTrick, gameRef.current.trumpSuit, gameRef.current.trumpNumber);
       const trickPoints = newTrick.flatMap(p => p.cards).reduce((s, c) => s + cardPoints(c), 0);
       const winnerTeam = winner % 2;
-      const newScores = [...game.scores];
+      const newScores = [...gameRef.current.scores];
       newScores[winnerTeam] += trickPoints;
-      const newTricks = [...(game.tricks || []), { plays: newTrick, winner, points: trickPoints }];
-      const log = [...(game.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
+      const newTricks = [...(gameRef.current.tricks || []), { plays: newTrick, winner, points: trickPoints }];
+      const log = [...(gameRef.current.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
       // Show completed trick for 2 seconds before clearing (host drives timer)
       newGame = { ...newGame, hands: newHands, currentTrick: newTrick, tricks: newTricks,
         scores: newScores, phase: 'trick_end', trickEndWinner: winner, trickEndLog: log, log };
@@ -864,21 +867,21 @@ export default function App() {
 
 
   const handleNextRound = async () => {
-    const r = game.roundResult;
-    const newLevels = [...game.levels];
+    const r = gameRef.current.roundResult;
+    const newLevels = [...gameRef.current.levels];
     const newAttacking = r.defScore >= 120
-      ? 1 - game.attackingTeam  // defenders win, switch
-      : game.attackingTeam;
+      ? 1 - gameRef.current.attackingTeam  // defenders win, switch
+      : gameRef.current.attackingTeam;
 
     if (r.defScore >= 120) {
-      newLevels[1 - game.attackingTeam] = Math.max(0, (newLevels[1 - game.attackingTeam] || 0) + Math.max(0, r.defGain));
+      newLevels[1 - gameRef.current.attackingTeam] = Math.max(0, (newLevels[1 - gameRef.current.attackingTeam] || 0) + Math.max(0, r.defGain));
     } else {
-      newLevels[game.attackingTeam] = Math.min(12, (newLevels[game.attackingTeam] || 0) + r.atkGain);
+      newLevels[gameRef.current.attackingTeam] = Math.min(12, (newLevels[gameRef.current.attackingTeam] || 0) + r.atkGain);
     }
 
     // Check win
     if (newLevels[0] > 12 || newLevels[1] > 12) {
-      await updateRoom(room.id, { game: { ...game, phase: 'game_over', levels: newLevels } });
+      await updateRoom(room.id, { game: { ...gameRef.current, phase: 'game_over', levels: newLevels } });
       return;
     }
 
@@ -910,8 +913,8 @@ export default function App() {
         attackingTeam: newAttacking,
         currentTurn: firstCardSeat,
         selectedCards: [[], [], [], []],
-        log: [`Round ${game.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
-        roundNum: (game.roundNum || 1) + 1,
+        log: [`Round ${gameRef.current.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
+        roundNum: (gameRef.current.roundNum || 1) + 1,
         roundResult: null,
       }
     });
