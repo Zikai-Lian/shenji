@@ -347,6 +347,12 @@ export default function App() {
   // Tracks the dealIndex we last wrote, so timer doesn't re-fire on own refetch
   const lastDealtIndexRef = useRef(-1);
 
+  // Get guaranteed-fresh game state from Supabase
+  const getFreshGame = async () => {
+    const { data } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+    return { freshGame: data?.game, freshRoom: data };
+  };
+
   const updateRoom = async (roomId, updates) => {
     await updateRoomRemote(roomId, updates);
     // Update local state immediately — no refetch needed
@@ -626,25 +632,27 @@ export default function App() {
 
 
   const handleDeclareTrump = async () => {
-    console.log('[Declare] mySeat:', mySeat, 'selectedCards:', selectedCards.map(c=>c.rank+c.suit), 'trumpNumber:', game?.trumpNumber, 'game exists:', !!game);
-    if (!game || selectedCards.length === 0) {
-      console.log('[Declare] early return - game:', !!game, 'selectedCards.length:', selectedCards.length);
-      return;
-    }
+    if (selectedCards.length === 0) return;
+
+    // Always fetch fresh game state to avoid stale closure issues
+    const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+    const freshGame = freshRoom?.game;
+    if (!freshGame) return;
 
     const allJokers = selectedCards.every(c => c.suit === 'JOKER');
-    const existingDecl = gameRef.current.trumpDeclaration;
+    const existingDecl = freshGame.trumpDeclaration;
     const newSuit = getTrumpSuitFromDeclaration(selectedCards);
     const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
     const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards.length) : 0;
     const iAmDeclarer = existingDecl?.playerIdx === mySeat;
+    console.log('[Declare] mySeat:', mySeat, 'existingDecl:', existingDecl?.playerIdx, 'trumpSuit:', freshGame.trumpSuit, 'cards:', selectedCards.map(c=>c.rank+c.suit));
 
     console.log('[Declare] allJokers:', allJokers, 'existingDecl:', existingDecl?.playerIdx, 'existingDeclFull:', JSON.stringify(existingDecl), 'iAmDeclarer:', iAmDeclarer, 'mySeat:', mySeat, 'gameRef.trumpSuit:', gameRef.current.trumpSuit);
     // Validate cards: must be all trump number of same suit, or all same joker type
     if (!allJokers) {
-      if (!selectedCards.every(c => c.rank === gameRef.current.trumpNumber)) {
-        console.log('[Declare] rank mismatch - cards:', selectedCards.map(c=>c.rank), 'trumpNumber:', gameRef.current.trumpNumber);
-        return setError(`Must select ${gameRef.current.trumpNumber}s (the trump number) to declare trump`);
+      if (!selectedCards.every(c => c.rank === freshGame.trumpNumber)) {
+        console.log('[Declare] rank mismatch - cards:', selectedCards.map(c=>c.rank), 'trumpNumber:', freshGame.trumpNumber);
+        return setError(`Must select ${freshGame.trumpNumber}s (the trump number) to declare trump`);
       }
       if (!selectedCards.every(c => c.suit === selectedCards[0].suit)) {
         return setError('All selected cards must be the same suit');
@@ -662,7 +670,7 @@ export default function App() {
       console.log('[Declare] Case 1 - newSuit:', newSuit, 'isLocked:', isLocked, 'mySeat:', mySeat, 'room.id:', room?.id);
       try {
         await updateRoom(room.id, { game: {
-          ...gameRef.current,
+          ...freshGame,
           trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
           trumpSuit: newSuit,
           log: [...(game.log || []), `${declName} declares trump${newSuit ? ` (${newSuit})` : ' (jokers — no suit)'} with ${selectedCards.length} card${selectedCards.length>1?'s':''}.`],
@@ -688,10 +696,10 @@ export default function App() {
       if (newCount < currentCount + 1) return setError('Must add at least 1 more card to reinforce');
       const isLocked = newCount >= 3;
       await updateRoom(room.id, { game: {
-        ...gameRef.current,
+        ...freshGame,
         trumpDeclaration: { ...existingDecl, declarationCount: newCount, locked: isLocked },
         log: [...(game.log || []), isLocked
-          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${gameRef.current.trumpNumber}s — locked!)`
+          ? `${declName} reinforces and locks in ${newSuit} as trump (${newCount} ${freshGame.trumpNumber}s — locked!)`
           : `${declName} reinforces ${newSuit} trump (${newCount} cards — needs ${newCount + 1} to override).`],
       }});
       setSelectedIds([]);
@@ -706,12 +714,12 @@ export default function App() {
     // Reset confirmed passes so overridden player gets their pass button back
     const resetConfirmed = (game.trumpConfirmed || []).filter(s => s === mySeat);
     await updateRoom(room.id, { game: {
-      ...gameRef.current,
+      ...freshGame,
       trumpDeclaration: { cards: selectedCards, playerIdx: mySeat, declarationCount: selectedCards.length, locked: isLocked },
       trumpSuit: newSuit,
       trumpConfirmed: resetConfirmed,
       log: [...(game.log || []), isLocked
-        ? `${declName} overrides and locks in ${newSuit} as trump with ${selectedCards.length} ${gameRef.current.trumpNumber}s!`
+        ? `${declName} overrides and locks in ${newSuit} as trump with ${selectedCards.length} ${freshGame.trumpNumber}s!`
         : `${declName} overrides trump${newSuit ? ` → ${newSuit}` : ' → jokers'} with ${selectedCards.length} cards.`],
     }});
     setSelectedIds([]);
@@ -719,31 +727,37 @@ export default function App() {
 
 
   const handleConfirmPass = async () => {
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
     if (!game) return;
-    const confirmed = gameRef.current.trumpConfirmed || [];
+    const confirmed = freshGame.trumpConfirmed || [];
     if (confirmed.includes(mySeat)) return; // already confirmed
-    await updateRoom(room.id, { game: { ...gameRef.current, trumpConfirmed: [...confirmed, mySeat] } });
+    await updateRoom(room.id, { game: { ...freshGame, trumpConfirmed: [...confirmed, mySeat] } });
   };
 
   const handleTakeKitty = async () => {
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
     // Derive kittyHolder in case it hasn't been written yet by host timer
-    const effectiveKittyHolder = gameRef.current.kittyHolder ??
-      (gameRef.current.roundNum === 1
-        ? (gameRef.current.trumpDeclaration?.playerIdx ?? gameRef.current.firstCardSeat ?? 0)
-        : (gameRef.current.firstCardSeat ?? 0));
+    const effectiveKittyHolder = freshGame.kittyHolder ??
+      (freshGame.roundNum === 1
+        ? (freshGame.trumpDeclaration?.playerIdx ?? freshGame.firstCardSeat ?? 0)
+        : (freshGame.firstCardSeat ?? 0));
     if (mySeat !== effectiveKittyHolder) return;
-    const newHand = [...myHand, ...gameRef.current.kitty];
-    const newHands = gameRef.current.hands.map((h, i) => i === mySeat ? newHand : h);
-    await updateRoom(room.id, { game: { ...gameRef.current, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
+    const newHand = [...myHand, ...freshGame.kitty];
+    const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
+    await updateRoom(room.id, { game: { ...freshGame, phase: 'kitty', kittyHolder: effectiveKittyHolder, hands: newHands, kitty: [], dealComplete: true } });
   };
 
   const handleDiscardKitty = async () => {
-    if (mySeat !== gameRef.current.kittyHolder) return;
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
+    if (mySeat !== freshGame.kittyHolder) return;
     if (selectedCards.length !== 6) return setError('Select exactly 6 cards to discard');
     const newHand = myHand.filter(c => !selectedIds.includes(c.id));
-    const newHands = gameRef.current.hands.map((h, i) => i === mySeat ? newHand : h);
+    const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
     await updateRoom(room.id, {
-      game: { ...gameRef.current, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: gameRef.current.kittyHolder, log: [...(gameRef.current.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
+      game: { ...freshGame, phase: 'playing', hands: newHands, kitty: selectedCards, currentTurn: freshGame.kittyHolder, log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} discarded kitty and set trump.`] }
     });
     setSelectedIds([]);
   };
@@ -800,25 +814,27 @@ export default function App() {
 
   // Challenger picks which sub-combo the leader must keep
   const handleChallenge = async (keptCombo) => {
-    if (!gameRef.current.challenge) return;
-    if (gameRef.current.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
+    if (!freshGame.challenge) return;
+    if (freshGame.challenge.challengerSeat !== mySeat) return setError("Not your turn to challenge");
     if (keptCombo.length === 0) return setError("Select which cards the leader must keep");
 
-    const { leaderSeat, playedCards } = gameRef.current.challenge;
+    const { leaderSeat, playedCards } = freshGame.challenge;
     const keptIds = new Set(keptCombo.map(c => c.id));
     const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
-    const leaderHand = [...(gameRef.current.hands[leaderSeat] || []), ...returnedCards];
-    const newHands = gameRef.current.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
+    const leaderHand = [...(freshGame.hands[leaderSeat] || []), ...returnedCards];
+    const newHands = freshGame.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
 
     await updateRoom(room.id, {
       game: {
-        ...gameRef.current,
+        ...freshGame,
         hands: newHands,
         phase: 'playing',
         challenge: null,
         currentTrick: [{ playerIdx: leaderSeat, cards: keptCombo, playerName: room.players.find(p => p.seat === leaderSeat).name }],
         currentTurn: (leaderSeat + 1) % 4,
-        log: [...(gameRef.current.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
+        log: [...(freshGame.log || []), `${room.players.find(p => p.seat === mySeat).name} challenges! ${room.players.find(p => p.seat === leaderSeat).name} must play ${keptCombo.length} cards.`],
       }
     });
     setSelectedIds([]);
@@ -827,20 +843,22 @@ export default function App() {
   const handlePassChallenge = async () => {}; // kept for compatibility, not used
 
   const commitPlay = async (cards, isLeading) => {
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
     const newHand = myHand.filter(c => !cards.map(c=>c.id).includes(c.id));
-    const newHands = gameRef.current.hands.map((h, i) => i === mySeat ? newHand : h);
-    const newTrick = [...(gameRef.current.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
+    const newHands = freshGame.hands.map((h, i) => i === mySeat ? newHand : h);
+    const newTrick = [...(freshGame.currentTrick || []), { playerIdx: mySeat, cards, playerName: room.players.find(p => p.seat === mySeat).name }];
 
-    let newGame = { ...gameRef.current, hands: newHands, currentTrick: newTrick };
+    let newGame = { ...freshGame, hands: newHands, currentTrick: newTrick };
 
     if (newTrick.length === 4) {
-      const winner = trickWinner(newTrick, gameRef.current.trumpSuit, gameRef.current.trumpNumber);
+      const winner = trickWinner(newTrick, freshGame.trumpSuit, freshGame.trumpNumber);
       const trickPoints = newTrick.flatMap(p => p.cards).reduce((s, c) => s + cardPoints(c), 0);
       const winnerTeam = winner % 2;
-      const newScores = [...gameRef.current.scores];
+      const newScores = [...freshGame.scores];
       newScores[winnerTeam] += trickPoints;
-      const newTricks = [...(gameRef.current.tricks || []), { plays: newTrick, winner, points: trickPoints }];
-      const log = [...(gameRef.current.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
+      const newTricks = [...(freshGame.tricks || []), { plays: newTrick, winner, points: trickPoints }];
+      const log = [...(freshGame.log || []), `${room.players.find(p => p.seat === winner)?.name || `Seat ${winner+1}`} wins trick (+${trickPoints} pts)`];
       // Show completed trick for 2 seconds before clearing (host drives timer)
       newGame = { ...newGame, hands: newHands, currentTrick: newTrick, tricks: newTricks,
         scores: newScores, phase: 'trick_end', trickEndWinner: winner, trickEndLog: log, log };
@@ -854,21 +872,23 @@ export default function App() {
 
 
   const handleNextRound = async () => {
-    const r = gameRef.current.roundResult;
-    const newLevels = [...gameRef.current.levels];
+    const { freshGame, freshRoom } = await getFreshGame();
+    if (!freshGame) return;
+    const r = freshGame.roundResult;
+    const newLevels = [...freshGame.levels];
     const newAttacking = r.defScore >= 120
-      ? 1 - gameRef.current.attackingTeam  // defenders win, switch
-      : gameRef.current.attackingTeam;
+      ? 1 - freshGame.attackingTeam  // defenders win, switch
+      : freshGame.attackingTeam;
 
     if (r.defScore >= 120) {
-      newLevels[1 - gameRef.current.attackingTeam] = Math.max(0, (newLevels[1 - gameRef.current.attackingTeam] || 0) + Math.max(0, r.defGain));
+      newLevels[1 - freshGame.attackingTeam] = Math.max(0, (newLevels[1 - freshGame.attackingTeam] || 0) + Math.max(0, r.defGain));
     } else {
-      newLevels[gameRef.current.attackingTeam] = Math.min(12, (newLevels[gameRef.current.attackingTeam] || 0) + r.atkGain);
+      newLevels[freshGame.attackingTeam] = Math.min(12, (newLevels[freshGame.attackingTeam] || 0) + r.atkGain);
     }
 
     // Check win
     if (newLevels[0] > 12 || newLevels[1] > 12) {
-      await updateRoom(room.id, { game: { ...gameRef.current, phase: 'game_over', levels: newLevels } });
+      await updateRoom(room.id, { game: { ...freshGame, phase: 'game_over', levels: newLevels } });
       return;
     }
 
@@ -879,7 +899,7 @@ export default function App() {
 
     await updateRoom(room.id, {
       game: {
-        ...gameRef.current,
+        ...freshGame,
         phase: 'dealing',
         hands: [[], [], [], []],
         dealSequence: sequence,
@@ -900,8 +920,8 @@ export default function App() {
         attackingTeam: newAttacking,
         currentTurn: firstCardSeat,
         selectedCards: [[], [], [], []],
-        log: [`Round ${gameRef.current.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
-        roundNum: (gameRef.current.roundNum || 1) + 1,
+        log: [`Round ${freshGame.roundNum + 1} starts. ${room.players.find(p => p.seat === newKittyHolder).name} holds kitty.`],
+        roundNum: (freshGame.roundNum || 1) + 1,
         roundResult: null,
       }
     });
