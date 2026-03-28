@@ -1141,7 +1141,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         );
       })()}
 
-      {game.(phase === 'playing' || phase === 'trick_end') && (
+      {(phase === 'playing' || phase === 'trick_end') && (
         <div style={{ background: SURFACE, border: `1px solid ${isMyTurn ? GOLD + '66' : BORDER}`, borderRadius: '10px', padding: '16px', marginBottom: '12px' }}>
           {isMyTurn ? (
             <>
