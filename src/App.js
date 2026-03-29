@@ -159,7 +159,7 @@ function PlayingCard({ card, selected, onClick, small }) {
     boxShadow: selected ? `0 -12px 24px ${GOLD}66,0 4px 10px rgba(0,0,0,0.35)` : '0 2px 6px rgba(0,0,0,0.28)',
     transform: selected ? 'translateY(-18px)' : 'none', transition: 'all 0.12s ease',
     position: 'relative', marginLeft: `${marginLeft}px`,
-    flexShrink: 0, overflow: 'visible', userSelect: 'none', zIndex: selected ? 10 : 'auto',
+    flexShrink: 0, overflow: 'hidden', userSelect: 'none',
   };
 
   const Corner = ({ flip }) => (
@@ -561,9 +561,7 @@ const updateRoom = async (roomId, updates) => {
           const nonDeclarers = [0,1,2,3].filter(s => s !== declarerSeat);
           const allPassed = g.trumpDeclaration.locked || nonDeclarers.every(s => confirmed.includes(s));
           if (allPassed && !g.dealComplete) {
-            const kittyHolder = g.roundNum === 1
-              ? (g.trumpDeclaration?.playerIdx ?? g.firstCardSeat ?? 0)
-              : (g.firstCardSeat ?? 0);
+            const kittyHolder = g.trumpDeclaration?.playerIdx ?? g.nextKittyHolder ?? g.firstCardSeat ?? 0;
             const finalGame = { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true };
             await updateRoomRemote(room.id, { game: finalGame });
             setGameAndRef({ ...finalGame });
@@ -932,6 +930,15 @@ const updateRoom = async (roomId, updates) => {
 
     const decks = buildDecks();
     const { sequence, kitty } = dealCardsSequential(decks);
+    // Determine next kittyHolder:
+    // If defenders win (defScore >= 120): defenders now attack, kittyHolder = teammate of prev kittyHolder
+    // If attackers win again (defScore < 120): kittyHolder = next seat clockwise from prev
+    const prevKittyHolder = g.kittyHolder ?? g.trumpDeclaration?.playerIdx ?? 0;
+    const defendersWon = r.defScore >= 120;
+    const nextKittyHolder = defendersWon
+      ? (prevKittyHolder + 2) % 4  // teammate of previous kitty holder
+      : (prevKittyHolder + 1) % 4; // next clockwise
+
     const initialGame = {
       phase: 'dealing',
       hands: [[], [], [], []],
@@ -947,12 +954,13 @@ const updateRoom = async (roomId, updates) => {
       scores: [0, 0],
       tricks: [],
       currentTrick: [],
-      currentTurn: 0,
+      currentTurn: nextKittyHolder,
       attackingTeam: newAttacking,
       levels: newLevels,
       roundNum: (g.roundNum || 1) + 1,
       firstCardSeat: null,
       firstCardSuit: null,
+      nextKittyHolder,
       log: [`Round ${(g.roundNum || 1) + 1} — Team ${newAttacking === 0 ? 'A' : 'B'} attacks at level ${LEVELS[newLevels[newAttacking]]}`],
     };
     await updateRoom(room.id, { game: initialGame });
@@ -1398,25 +1406,27 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         </div>
         {/* Group hand by suit */}
         {(() => {
-          const groups = [];
           const nonTrump = sortedHand.filter(card => !isTrump(card, game.trumpSuit, game.trumpNumber));
           const trumpCards = sortedHand.filter(card => isTrump(card, game.trumpSuit, game.trumpNumber));
-          const suits = ['\u2660','\u2665','\u2666','\u2663'].filter(s => s !== game.trumpSuit);
-          suits.forEach(suit => {
-            const cards = nonTrump.filter(c => c.suit === suit);
-            if (cards.length) groups.push({ label: suit, cards, color: (suit==='\u2665'||suit==='\u2666') ? '#cc2200' : '#aaaaaa' });
-          });
-          if (trumpCards.length) groups.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
-          return groups.map(({ label, cards, color }) => (
-            <div key={label} style={{ marginBottom: '6px' }}>
-              <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '4px', paddingLeft: '4px' }}>{label} ({cards.length})</div>
+          const rows = [];
+          if (nonTrump.length) rows.push({ label: 'Non-Trump', cards: nonTrump, color: TEXT });
+          if (trumpCards.length) rows.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
+          const OVERLAP = 26; // px overlap between cards
+          const CARD_W = 64;
+          return rows.map(({ label, cards, color }) => (
+            <div key={label} style={{ marginBottom: '8px' }}>
+              <div style={{ fontSize: '10px', color, fontWeight: 700, letterSpacing: '0.1em', marginBottom: '6px', paddingLeft: '16px' }}>
+                {label} ({cards.length})
+              </div>
               <div style={{ overflowX: 'auto', overflowY: 'visible', WebkitOverflowScrolling: 'touch', paddingBottom: '8px' }}>
-                <div style={{ display: 'flex', flexWrap: 'nowrap', padding: '28px 16px 4px 16px', gap: '4px', width: 'max-content', minWidth: '100%' }}>
-                {cards.map(card => (
-                  <PlayingCard key={card.id} card={card}
-                    selected={selectedIds.includes(card.id)}
-                    onClick={() => toggleCard(card.id)} />
-                ))}
+                <div style={{ display: 'flex', flexWrap: 'nowrap', paddingLeft: '16px', paddingRight: '16px', paddingTop: '28px', paddingBottom: '4px', width: 'max-content', minWidth: '100%' }}>
+                  {cards.map((card, i) => (
+                    <div key={card.id} style={{ marginLeft: i === 0 ? 0 : -OVERLAP, zIndex: selectedIds.includes(card.id) ? 100 : i, position: 'relative' }}>
+                      <PlayingCard card={card}
+                        selected={selectedIds.includes(card.id)}
+                        onClick={() => toggleCard(card.id)} />
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
