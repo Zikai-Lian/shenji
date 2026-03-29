@@ -706,16 +706,7 @@ function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
         if (r > ledRank) return true;
       }
     }
-    // Trump pair beats non-trump pair
-    if (leadSuit !== 'TRUMP') {
-      const tGroups = {};
-      for (const c of handTrump) {
-        const k = cardKey(c, trumpSuit, trumpNumber);
-        if (!tGroups[k]) tGroups[k] = 0;
-        tGroups[k]++;
-      }
-      if (Object.values(tGroups).some(n => n >= 2)) return true;
-    }
+    // Challenge: only same-suit higher pair counts, not trump pairs
     return false;
   }
 
@@ -733,15 +724,7 @@ function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
         if (r > ledRank) return true;
       }
     }
-    if (leadSuit !== 'TRUMP') {
-      const tGroups = {};
-      for (const c of handTrump) {
-        const k = cardKey(c, trumpSuit, trumpNumber);
-        if (!tGroups[k]) tGroups[k] = 0;
-        tGroups[k]++;
-      }
-      if (Object.values(tGroups).some(n => n >= 3)) return true;
-    }
+    // Challenge: only same-suit higher triple counts
     return false;
   }
 
@@ -777,8 +760,7 @@ function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
         if (rCurr === rPrev + 1 && topR > maxLedRank) return true;
       }
     }
-    // Trump tractor beats non-trump tractor
-    if (leadSuit !== 'TRUMP' && hasTractor(handTrump, groupSize, 'TRUMP', trumpSuit, trumpNumber)) return true;
+    // Challenge: only same-suit higher tractor counts
     return false;
   }
 
@@ -792,11 +774,16 @@ function canBeatComponent(hand, component, trumpSuit, trumpNumber) {
 // Returns { challengerSeat, components } or null
 export function findChallenger(leaderSeat, hands, playedCards, trumpSuit, trumpNumber) {
   const components = decomposeCombo(playedCards, trumpSuit, trumpNumber);
+
+  // Challenge only applies to big plays with MULTIPLE components
+  // A single combo (one pair, one tractor, one triple etc.) cannot be challenged
+  if (components.length < 2) return null;
+
   // Clockwise order: next seat, across, then prev seat
   const order = [(leaderSeat + 1) % 4, (leaderSeat + 2) % 4, (leaderSeat + 3) % 4];
   for (const seat of order) {
     const hand = hands[seat] || [];
-    // Find which components this player can beat
+    // Find which components this player can beat (only same non-trump suit)
     const beatableComponents = components.filter(comp =>
       canBeatComponent(hand, comp, trumpSuit, trumpNumber)
     );
