@@ -604,6 +604,51 @@ const updateRoom = async (roomId, updates) => {
     return () => clearTimeout(dealTimerRef.current);
   }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length, !!game?.trumpDeclaration, game?.trumpDeclaration?.locked]);
 
+  // ── Auto-pass when player has no valid trump declaration options ──────────
+  useEffect(() => {
+    if (!game || !room || mySeat < 0) return;
+    if (game.phase !== 'dealing') return;
+    if (game.dealComplete) return; // already finalized
+
+    // Only trigger after all cards are dealt
+    const allDealt = game.dealIndex >= (game.dealSequence?.length || 156);
+    if (!allDealt) return;
+
+    // Don't autopass if already passed or is the current declarer
+    const confirmed = game.trumpConfirmed || [];
+    if (confirmed.includes(mySeat)) return;
+    const existingDecl = game.trumpDeclaration;
+    if (existingDecl?.playerIdx === mySeat) return; // I'm the declarer, don't autopass
+
+    // Check if this player has ANY valid declaration options
+    const myCurrentHand = game.hands?.[mySeat] || [];
+    const trumpNumber = game.trumpNumber;
+
+    // Can declare if: has any trump number card, or has 2+ same jokers
+    const hasTrumpNumberCard = myCurrentHand.some(card => card.rank === trumpNumber);
+    const bigJokers = myCurrentHand.filter(c => c.suit === 'JOKER' && c.rank === 'BIG');
+    const smallJokers = myCurrentHand.filter(c => c.suit === 'JOKER' && c.rank === 'SMALL');
+    const hasJokerPair = bigJokers.length >= 2 || smallJokers.length >= 2;
+    const canDeclare = hasTrumpNumberCard || hasJokerPair;
+
+    // If cannot declare anything, autopass after a short delay
+    if (!canDeclare) {
+      const timer = setTimeout(async () => {
+        // Re-check with fresh state to be safe
+        const { data: freshRoom } = await supabase.from('rooms').select('game').eq('id', room.id).single();
+        const freshGame = freshRoom?.game;
+        if (!freshGame) return;
+        const freshConfirmed = freshGame.trumpConfirmed || [];
+        if (freshConfirmed.includes(mySeat)) return; // already passed
+        if (freshGame.trumpDeclaration?.playerIdx === mySeat) return; // became declarer
+        if (freshGame.dealComplete) return; // already finalized
+        // Autopass
+        await updateRoom(room.id, { game: { ...freshGame, trumpConfirmed: [...freshConfirmed, mySeat] } });
+      }, 500); // small delay to let subscription catch up first
+      return () => clearTimeout(timer);
+    }
+  }, [game?.dealIndex, game?.dealComplete, game?.phase, mySeat, game?.trumpConfirmed?.length, game?.trumpDeclaration?.playerIdx]);
+
   const toggleCard = (cardId) => {
     setSelectedIds(prev =>
       prev.includes(cardId) ? prev.filter(id => id !== cardId) : [...prev, cardId]
@@ -666,11 +711,12 @@ const updateRoom = async (roomId, updates) => {
   const handleDeclareTrump = async () => {
     if (selectedIds.length === 0) return;
 
-    // Use current game state — deal timer uses fresh fetch so won't clobber us
-    const g = gameRef.current;
+    // MUST fetch fresh state — another player may have declared since our last render
+    const { data: freshRoom } = await supabase.from('rooms').select('*').eq('id', room.id).single();
+    const g = freshRoom?.game;
     if (!g) return;
 
-    // Build selected cards from current hand
+    // Build selected cards from fresh hand
     const myCurrentHand = g.hands?.[mySeat] || [];
     const declSelected = myCurrentHand.filter(card => selectedIds.includes(card.id));
     if (declSelected.length === 0) return setError('Selected cards not in hand');
@@ -1411,7 +1457,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           const rows = [];
           if (nonTrump.length) rows.push({ label: 'Non-Trump', cards: nonTrump, color: TEXT });
           if (trumpCards.length) rows.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
-          const OVERLAP = 26; // px overlap between cards
+          const OVERLAP = 44; // px overlap between cards — tighter packing
           const CARD_W = 64;
           return rows.map(({ label, cards, color }) => (
             <div key={label} style={{ marginBottom: '8px' }}>
