@@ -424,7 +424,7 @@ const updateRoom = async (roomId, updates) => {
     setLoading(true); setError('');
     try {
       const { room: r, playerId: pid } = await createRoom(playerName.trim());
-      setRoom(r); setGameAndRef(r.game); setPlayerId(pid); setScreen('lobby');
+      setRoom(r); setGameAndRef(r.game); setPlayerId(pid); setScreen('lobby'); setConfirmLeave(false);;
       localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -436,7 +436,7 @@ const updateRoom = async (roomId, updates) => {
     setLoading(true); setError('');
     try {
       const { room: r, playerId: pid } = await joinRoom(joinCode, playerName.trim());
-      setRoom(r); setGameAndRef(r.game); setPlayerId(pid); setScreen('lobby');
+      setRoom(r); setGameAndRef(r.game); setPlayerId(pid); setScreen('lobby'); setConfirmLeave(false);;
       localStorage.setItem('shengji_session', JSON.stringify({ roomId: r.id, playerId: pid }));
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -720,6 +720,7 @@ const updateRoom = async (roomId, updates) => {
 
   const handleLeave = async () => {
     if (!room) return;
+    setConfirmLeave(false);
     // Remove self from players
     const updated = room.players.filter(p => p.id !== playerId);
     // If host is leaving, transfer host to next player (or delete room if empty)
