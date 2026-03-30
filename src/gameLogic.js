@@ -363,7 +363,24 @@ function hasTractor(cards, groupSize, leadSuit, trumpSuit, trumpNumber) {
 
   if (leadSuit === 'TRUMP') {
     const order = getTrumpOrder(trumpSuit, trumpNumber);
-    const positions = eligibleKeys.map(k => order.indexOf(k)).filter(p => p !== -1).sort((a, b) => a - b);
+    // Normalize: all non-suit trump numbers are the same rank (equal in Sheng Ji)
+    const normalize = (k) => k.startsWith('TRUMP_NUM_') && k !== 'TRUMP_NUM_TRUMP_SUIT' ? 'TRUMP_NUM_NONSUIT' : k;
+    // Count total cards per normalized slot
+    const normalGroups = {};
+    for (const k of eligibleKeys) {
+      const nk = normalize(k);
+      normalGroups[nk] = (normalGroups[nk] || 0) + groups[k];
+    }
+    // Build normalized order (deduplicated)
+    const normalOrder = [];
+    const seen = new Set();
+    for (const k of order) {
+      const nk = normalize(k);
+      if (!seen.has(nk)) { normalOrder.push(nk); seen.add(nk); }
+    }
+    // Check consecutive slots where each has >= groupSize cards
+    const eligibleNorm = Object.keys(normalGroups).filter(k => normalGroups[k] >= groupSize);
+    const positions = eligibleNorm.map(k => normalOrder.indexOf(k)).filter(p => p !== -1).sort((a, b) => a - b);
     for (let i = 1; i < positions.length; i++) {
       if (positions[i] === positions[i - 1] + 1) return true;
     }
@@ -414,8 +431,14 @@ export function validateFollow(playedCards, hand, leadCombo, trumpSuit, trumpNum
 
   // ── Pair ──────────────────────────────────────────────────────────────────
   if (type === 'pair') {
-    const handPairs = countGroups(suitInHand, 2, trumpSuit, trumpNumber);
-    if (handPairs > 0) {
+    // Only exact pairs force play — triples are exempt
+    const groups = {};
+    for (const card of suitInHand) {
+      const k = cardKey(card, trumpSuit, trumpNumber);
+      groups[k] = (groups[k] || 0) + 1;
+    }
+    const hasExactPair = Object.values(groups).some(n => n === 2);
+    if (hasExactPair) {
       const playedPairs = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
       if (playedPairs === 0) return `You have a pair in this suit — must play it`;
     }
@@ -436,15 +459,25 @@ export function validateFollow(playedCards, hand, leadCombo, trumpSuit, trumpNum
 
   // ── Pair tractor ──────────────────────────────────────────────────────────
   if (type === 'pair_tractor') {
-    // Priority: pair tractor → 2 pairs → 1 pair → singles (NO triples required)
+    // Priority: pair tractor → exact pairs → singles
+    // Triples (3-of-a-kind) are EXEMPT — cannot be forced as a pair
     const handHasPairTractor = hasTractor(suitInHand, 2, leadSuit, trumpSuit, trumpNumber);
-    const handPairs = countGroups(suitInHand, 2, trumpSuit, trumpNumber);
+    // Count only EXACT pairs (count===2), not triples or quads
+    const countExactPairs = (cards) => {
+      const groups = {};
+      for (const card of cards) {
+        const k = cardKey(card, trumpSuit, trumpNumber);
+        groups[k] = (groups[k] || 0) + 1;
+      }
+      return Object.values(groups).filter(n => n === 2).length;
+    };
+    const handExactPairs = countExactPairs(suitInHand);
     const playedPairTractor = playedHasTractor(playedInSuit, 2, trumpSuit, trumpNumber);
     const playedPairs = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
 
     if (handHasPairTractor && !playedPairTractor) return `You have a pair tractor — must play it`;
-    if (!handHasPairTractor && handPairs >= 2 && playedPairs < 2) return `You have 2 pairs — must play both`;
-    if (!handHasPairTractor && handPairs === 1 && playedPairs < 1) return `You have a pair — must play it`;
+    if (!handHasPairTractor && handExactPairs >= 2 && playedPairs < 2) return `You have 2 pairs — must play both`;
+    if (!handHasPairTractor && handExactPairs === 1 && playedPairs < 1) return `You have a pair — must play it`;
     return null;
   }
 
