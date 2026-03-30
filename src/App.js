@@ -491,10 +491,15 @@ const updateRoom = async (roomId, updates) => {
   // ── Auto-deal animation ──────────────────────────────────────────────────
   // ── Trick end delay — host waits 2s then resolves ──────────────────────────
   useEffect(() => {
-    if (!game || game.phase !== 'trick_end' || mySeat !== 0) return;
+    // Any seated player drives trick_end — first writer wins, others are no-ops
+    // This means if host disconnects, someone else resolves the trick
+    if (!game || game.phase !== 'trick_end' || mySeat < 0) return;
+    const jitter = mySeat * 150; // stagger by seat to avoid simultaneous writes
     const timer = setTimeout(async () => {
       // Use game directly from closure (captured when useEffect ran, which is correct)
-      const g = game;
+      // Re-fetch to get latest state — prevents overwriting if phase already advanced
+      const { data: tr } = await supabase.from('rooms').select('game').eq('id', room?.id).single();
+      const g = tr?.game;
       if (!g || g.phase !== 'trick_end') return;
       const winner = g.trickEndWinner;
       const log = g.trickEndLog || g.log;
@@ -648,6 +653,35 @@ const updateRoom = async (roomId, updates) => {
       return () => clearTimeout(timer);
     }
   }, [game?.dealIndex, game?.dealComplete, game?.phase, mySeat, game?.trumpConfirmed?.length, game?.trumpDeclaration?.playerIdx]);
+
+  // ── Challenge timeout — cancel after 30s if challenger doesn't act ─────────
+  useEffect(() => {
+    if (!game || game.phase !== 'challenge' || !game.challenge || mySeat < 0) return;
+    const iAmChallenger = game.challenge.challengerSeat === mySeat;
+    if (!iAmChallenger) return;
+    // If challenger doesn't act in 30s, auto-cancel the challenge
+    const timer = setTimeout(async () => {
+      const { data: fr } = await supabase.from('rooms').select('*').eq('id', room?.id).single();
+      const fg = fr?.game;
+      if (!fg || fg.phase !== 'challenge') return; // already resolved
+      const { leaderSeat, playedCards } = fg.challenge;
+      // Auto-keep the highest-ranked component (best for leader)
+      const comps = fg.challenge.components || [];
+      const keptComp = comps[comps.length - 1]; // last = highest ranked
+      if (!keptComp) return;
+      const keptIds = new Set(keptComp.cards.map(c => c.id));
+      const returnedCards = playedCards.filter(c => !keptIds.has(c.id));
+      const leaderHand = [...(fg.hands[leaderSeat] || []), ...returnedCards];
+      const newHands = fg.hands.map((h, i) => i === leaderSeat ? leaderHand : h);
+      await updateRoom(room.id, { game: {
+        ...fg, hands: newHands, phase: 'playing', challenge: null,
+        currentTrick: [{ playerIdx: leaderSeat, cards: keptComp.cards, playerName: room.players.find(p => p.seat === leaderSeat)?.name }],
+        currentTurn: (leaderSeat + 1) % 4,
+        log: [...(fg.log || []), 'Challenge timed out — auto-resolved.'],
+      }});
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [game?.phase, game?.challenge?.challengerSeat]);
 
   const toggleCard = (cardId) => {
     setSelectedIds(prev =>
@@ -1457,7 +1491,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
           const rows = [];
           if (nonTrump.length) rows.push({ label: 'Non-Trump', cards: nonTrump, color: TEXT });
           if (trumpCards.length) rows.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
-          const OVERLAP = 44; // px overlap between cards — tighter packing
+          const OVERLAP = 36; // px overlap between cards
           const CARD_W = 64;
           return rows.map(({ label, cards, color }) => (
             <div key={label} style={{ marginBottom: '8px' }}>
