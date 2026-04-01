@@ -225,13 +225,20 @@ function beats(challenger, current, leadSuit, trumpSuit, trumpNumber) {
   const currTrump = current.every(c => isTrump(c, trumpSuit, trumpNumber));
   const chalSuit = getLeadSuit(challenger, trumpSuit, trumpNumber);
 
-  // Trump beats non-trump entirely
-  if (chalTrump && !currTrump) return true;
+  // Trump beats non-trump ONLY if combo type matches
+  // e.g. 2 trump singles cannot beat a non-trump pair
+  if (chalTrump && !currTrump) {
+    const chalCombo = detectCombo(challenger, trumpSuit, trumpNumber);
+    const currCombo = detectCombo(current, trumpSuit, trumpNumber);
+    const tiers = { single: 0, pair: 1, triple: 2, pair_tractor: 3, triple_tractor: 4, mixed: -1 };
+    const chalTier = tiers[chalCombo.type] ?? -1;
+    const currTier = tiers[currCombo.type] ?? -1;
+    return chalTier >= currTier; // must match or exceed combo type to beat
+  }
   if (!chalTrump && currTrump) return false;
 
   // Must be same suit as lead to beat
   if (!chalTrump && chalSuit !== leadSuit) return false;
-  if (chalTrump && !currTrump) return true; // already handled above
 
   // Both same suit — detect combo types and enforce matching
   const chalCombo = detectCombo(challenger, trumpSuit, trumpNumber);
