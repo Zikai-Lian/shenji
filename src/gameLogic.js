@@ -30,12 +30,13 @@ export function shuffle(arr) {
   return a;
 }
 
-export function dealCardsSequential(cards) {
+export function dealCardsSequential(cards, startSeat = 0) {
   // Returns the full sequence of deals: [{seat, card}] then kitty at end
+  // startSeat: the dealer/first card recipient
   const shuffled = shuffle(cards);
   const kitty = shuffled.slice(0, 6);
   const remaining = shuffled.slice(6);
-  const sequence = remaining.map((card, i) => ({ seat: i % 4, card }));
+  const sequence = remaining.map((card, i) => ({ seat: (startSeat + i) % 4, card }));
   return { sequence, kitty };
 }
 
