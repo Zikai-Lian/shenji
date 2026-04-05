@@ -607,7 +607,7 @@ const updateRoom = async (roomId, updates) => {
       };
       await updateRoomRemote(room.id, { game: dealtGame });
       setGameAndRef({ ...dealtGame });
-    }, 125);
+    }, 60);
 
     return () => clearTimeout(dealTimerRef.current);
   }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length, !!game?.trumpDeclaration, game?.trumpDeclaration?.locked]);
