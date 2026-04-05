@@ -566,7 +566,10 @@ const updateRoom = async (roomId, updates) => {
           const nonDeclarers = [0,1,2,3].filter(s => s !== declarerSeat);
           const allPassed = g.trumpDeclaration.locked || nonDeclarers.every(s => confirmed.includes(s));
           if (allPassed && !g.dealComplete) {
-            const kittyHolder = g.trumpDeclaration?.playerIdx ?? g.nextKittyHolder ?? g.firstCardSeat ?? 0;
+            // Round 2+: kitty goes to the designated dealer (nextKittyHolder), not trump declarer
+          const kittyHolder = g.roundNum === 1
+            ? (g.trumpDeclaration?.playerIdx ?? g.nextKittyHolder ?? 0)
+            : (g.nextKittyHolder ?? g.trumpDeclaration?.playerIdx ?? 0);
             const finalGame = { ...g, kittyHolder, currentTurn: kittyHolder, dealComplete: true };
             await updateRoomRemote(room.id, { game: finalGame });
             setGameAndRef({ ...finalGame });
@@ -1011,13 +1014,13 @@ const updateRoom = async (roomId, updates) => {
 
     const decks = buildDecks();
     const { sequence, kitty } = dealCardsSequential(decks);
-    // Determine next kittyHolder:
-    // If defenders win (defScore >= 120): defenders now attack, kittyHolder = teammate of prev kittyHolder
-    // If attackers win again (defScore < 120): kittyHolder = next seat clockwise from prev
+    // After round 1, kitty always goes to the dealer (whoever declared trump / held kitty)
+    // Win: defenders become attackers, dealer = teammate of prev dealer
+    // Loss: attackers stay, dealer = next clockwise from prev dealer
     const prevKittyHolder = g.kittyHolder ?? g.trumpDeclaration?.playerIdx ?? 0;
     const defendersWon = r.defScore >= 120;
     const nextKittyHolder = defendersWon
-      ? (prevKittyHolder + 2) % 4  // teammate of previous kitty holder
+      ? (prevKittyHolder + 2) % 4  // teammate of previous dealer
       : (prevKittyHolder + 1) % 4; // next clockwise
 
     const initialGame = {
