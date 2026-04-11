@@ -1010,15 +1010,15 @@ const updateRoom = async (roomId, updates) => {
     }
 
     const decks = buildDecks();
-    const { sequence, kitty } = dealCardsSequential(decks);
-    // After round 1, kitty always goes to the dealer (whoever declared trump / held kitty)
-    // Win: defenders become attackers, dealer = teammate of prev dealer
-    // Loss: attackers stay, dealer = next clockwise from prev dealer
+    // Compute next kitty holder BEFORE dealing so we can pass it as startSeat
+    // Win (defenders scored ≥120): defenders now attack, kitty → partner of prev holder
+    // Loss (attackers win again): kitty → next seat clockwise from prev holder
     const prevKittyHolder = g.kittyHolder ?? g.trumpDeclaration?.playerIdx ?? 0;
     const defendersWon = r.defScore >= 120;
     const nextKittyHolder = defendersWon
-      ? (prevKittyHolder + 2) % 4  // teammate of previous dealer
-      : (prevKittyHolder + 1) % 4; // next clockwise
+      ? (prevKittyHolder + 2) % 4  // partner of previous kitty holder
+      : (prevKittyHolder + 1) % 4; // immediately next clockwise
+    const { sequence, kitty } = dealCardsSequential(decks, nextKittyHolder);
 
     const initialGame = {
       phase: 'dealing',
