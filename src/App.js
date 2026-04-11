@@ -454,7 +454,7 @@ const updateRoom = async (roomId, updates) => {
       await updateRoom(room.id, { players: normalizedPlayers });
     }
     const decks = buildDecks();
-    const { sequence, kitty } = dealCardsSequential(decks, nextKittyHolder);
+    const { sequence, kitty } = dealCardsSequential(decks, 0); // round 1 always starts from seat 0
     const initialGame = {
       phase: 'dealing',
       hands: [[], [], [], []],
