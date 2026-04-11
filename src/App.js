@@ -594,23 +594,20 @@ const updateRoom = async (roomId, updates) => {
         return;
       }
 
-      // Deal next card — second fresh fetch right before write to prevent double-deals
-      const { data: preWrite } = await supabase.from('rooms').select('game').eq('id', room.id).single();
-      const pg = preWrite?.game;
-      if (!pg || pg.dealIndex !== g.dealIndex) return; // already dealt by another timer fire
-      const seq = pg.dealSequence;
-      const { seat, card } = seq[pg.dealIndex];
-      const newHands = pg.hands.map((h, i) => i === seat ? [...h, card] : h);
-      const dealtGame = { ...pg, hands: newHands, dealIndex: pg.dealIndex + 1,
-        firstCardSeat: pg.dealIndex === 0 ? seat : pg.firstCardSeat,
-        firstCardSuit: pg.dealIndex === 0 ? card.suit : pg.firstCardSuit,
+      // Deal next card using fresh state from first fetch
+      const seq = g.dealSequence;
+      const { seat, card } = seq[g.dealIndex];
+      const newHands = g.hands.map((h, i) => i === seat ? [...h, card] : h);
+      const dealtGame = { ...g, hands: newHands, dealIndex: g.dealIndex + 1,
+        firstCardSeat: g.dealIndex === 0 ? seat : g.firstCardSeat,
+        firstCardSuit: g.dealIndex === 0 ? card.suit : g.firstCardSuit,
       };
       await updateRoomRemote(room.id, { game: dealtGame });
       setGameAndRef({ ...dealtGame });
     }, 60);
 
     return () => clearTimeout(dealTimerRef.current);
-  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length, !!game?.trumpDeclaration, game?.trumpDeclaration?.locked]);
+  }, [game?.dealIndex, game?.phase, game?.dealComplete, game?.trumpConfirmed?.length]);
 
   // ── Auto-pass when player has no valid trump declaration options ──────────
   useEffect(() => {
