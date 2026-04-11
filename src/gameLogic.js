@@ -180,10 +180,11 @@ function detectTractor(cards, trumpSuit, trumpNumber) {
     if (groupSize === 2) return { type: numGroups >= 2 ? 'pair_tractor' : 'pair', valid: true, groups: numGroups, size: groupSize };
     if (groupSize === 3) return { type: numGroups >= 2 ? 'triple_tractor' : 'triple', valid: true, groups: numGroups, size: groupSize };
   } else {
-    // Non-trump: all must be same suit, consecutive ranks
+    // Non-trump: all must be same suit, consecutive ranks (skipping trump number)
     const suits = [...new Set(cards.map(c => c.suit))];
     if (suits.length > 1) return null;
-    const ranks = keys.map(k => RANKS.indexOf(k.split('_')[1]));
+    const suitRanks = RANKS.filter(r => r !== trumpNumber);
+    const ranks = keys.map(k => suitRanks.indexOf(k.split('_')[1]));
     ranks.sort((a, b) => a - b);
     for (let i = 1; i < ranks.length; i++) {
       if (ranks[i] !== ranks[i - 1] + 1) return null;
@@ -393,9 +394,13 @@ function hasTractor(cards, groupSize, leadSuit, trumpSuit, trumpNumber) {
       if (positions[i] === positions[i - 1] + 1) return true;
     }
   } else {
+    // Build a suit-specific rank order that skips the trump number
+    // e.g. if trumpNumber=3 and suit=♣: ranks go 2,4,5,6... (3 is trump, not in suit)
+    const suitRanks = RANKS.filter(r => r !== trumpNumber);
     const ranks = eligibleKeys.map(k => {
       const parts = k.split('_');
-      return RANKS.indexOf(parts[parts.length - 1]);
+      const rank = parts[parts.length - 1];
+      return suitRanks.indexOf(rank);
     }).filter(r => r !== -1).sort((a, b) => a - b);
     for (let i = 1; i < ranks.length; i++) {
       if (ranks[i] === ranks[i - 1] + 1) return true;
@@ -467,25 +472,80 @@ export function validateFollow(playedCards, hand, leadCombo, trumpSuit, trumpNum
 
   // ── Pair tractor ──────────────────────────────────────────────────────────
   if (type === 'pair_tractor') {
-    // Priority: pair tractor → exact pairs → singles
-    // Triples (3-of-a-kind) are EXEMPT — cannot be forced as a pair
-    const handHasPairTractor = hasTractor(suitInHand, 2, leadSuit, trumpSuit, trumpNumber);
-    // Count only EXACT pairs (count===2), not triples or quads
+    // The lead is a tractor of N pairs (leadCards.length / 2 pairs)
+    // Priority: use as many tractor pairs as possible, then fill with exact pairs, then singles
+    // Triples are EXEMPT from being forced as pairs
+    const leadPairCount = Math.floor(n / 2); // how many pairs the lead tractor has
+
+    // Count only EXACT pairs (count===2), triples exempt
     const countExactPairs = (cards) => {
       const groups = {};
       for (const card of cards) {
         const k = cardKey(card, trumpSuit, trumpNumber);
         groups[k] = (groups[k] || 0) + 1;
       }
-      return Object.values(groups).filter(n => n === 2).length;
+      return Object.values(groups).filter(cnt => cnt === 2).length;
     };
-    const handExactPairs = countExactPairs(suitInHand);
-    const playedPairTractor = playedHasTractor(playedInSuit, 2, trumpSuit, trumpNumber);
-    const playedPairs = countGroups(playedInSuit, 2, trumpSuit, trumpNumber);
 
-    if (handHasPairTractor && !playedPairTractor) return `You have a pair tractor — must play it`;
-    if (!handHasPairTractor && handExactPairs >= 2 && playedPairs < 2) return `You have 2 pairs — must play both`;
-    if (!handHasPairTractor && handExactPairs === 1 && playedPairs < 1) return `You have a pair — must play it`;
+    // Find all pair tractors in hand and their sizes
+    const getTractorPairs = (cards) => {
+      // Returns total number of pairs committed in the best tractor available
+      // Only exact pairs (count===2) — triples are EXEMPT from forced tractor plays
+      const groups = {};
+      for (const card of cards) {
+        const k = cardKey(card, trumpSuit, trumpNumber);
+        groups[k] = (groups[k] || 0) + 1;
+      }
+      const eligibleKeys = Object.keys(groups).filter(k => groups[k] === 2);
+      if (eligibleKeys.length < 2) return 0;
+      // Find longest consecutive run
+      if (leadSuit === 'TRUMP') {
+        const order = getTrumpOrder(trumpSuit, trumpNumber);
+        const normalize = (k) => k.startsWith('TRUMP_NUM_') && k !== 'TRUMP_NUM_TRUMP_SUIT' ? 'TRUMP_NUM_NONSUIT' : k;
+        const posMap = {};
+        for (const k of eligibleKeys) { posMap[k] = order.indexOf(normalize(k)); }
+        const positions = [...new Set(eligibleKeys.map(k => posMap[k]))].sort((a,b)=>a-b);
+        let maxRun = 0, run = 1;
+        for (let i = 1; i < positions.length; i++) {
+          if (positions[i] === positions[i-1]+1) { run++; maxRun = Math.max(maxRun, run); }
+          else run = 1;
+        }
+        return Math.max(maxRun, run);
+      } else {
+        const suitRanksLocal = RANKS.filter(r => r !== trumpNumber);
+        const positions = eligibleKeys.map(k => {
+          const parts = k.split('_'); return suitRanksLocal.indexOf(parts[parts.length-1]);
+        }).sort((a,b)=>a-b);
+        let maxRun = 0, run = 1;
+        for (let i = 1; i < positions.length; i++) {
+          if (positions[i] === positions[i-1]+1) { run++; maxRun = Math.max(maxRun, run); }
+          else run = 1;
+        }
+        return Math.max(maxRun, run);
+      }
+    };
+
+    const handTractorPairs = getTractorPairs(suitInHand); // pairs in best hand tractor
+    const handExactPairs = countExactPairs(suitInHand);
+    const playedExactPairs = countExactPairs(playedInSuit);
+    const playedTractorPairs = playedHasTractor(playedInSuit, 2, trumpSuit, trumpNumber)
+      ? getTractorPairs(playedInSuit) : 0;
+
+    // How many tractor pairs must be played (capped at lead size)
+    const requiredTractorPairs = Math.min(handTractorPairs, leadPairCount);
+    if (requiredTractorPairs > 0 && playedTractorPairs < requiredTractorPairs) {
+      return `You have a ${requiredTractorPairs}-pair tractor — must include it`;
+    }
+
+    // Remaining slots after tractor: fill with exact pairs
+    const remainingSlots = leadPairCount - requiredTractorPairs;
+    const remainingExactPairs = Math.max(0, handExactPairs - requiredTractorPairs);
+    const pairsToPlay = Math.min(remainingExactPairs, remainingSlots);
+    const playedPairsOutsideTractor = Math.max(0, playedExactPairs - playedTractorPairs);
+    if (pairsToPlay > 0 && playedPairsOutsideTractor < pairsToPlay) {
+      return `You have ${pairsToPlay} more pair${pairsToPlay>1?'s':''} — must include them`;
+    }
+
     return null;
   }
 
