@@ -1487,8 +1487,18 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         </div>
         {/* Group hand by suit */}
         {(() => {
-          const nonTrump = sortedHand.filter(card => !isTrump(card, game.trumpSuit, game.trumpNumber));
-          const trumpCards = sortedHand.filter(card => isTrump(card, game.trumpSuit, game.trumpNumber));
+          const nonTrump = sortedHand
+            .filter(card => !isTrump(card, game.trumpSuit, game.trumpNumber))
+            .sort((a, b) => {
+              // Sort by suit group first, then by rank numerically within suit
+              const suitOrder = ['♠','♥','♦','♣'].filter(s => s !== game.trumpSuit);
+              const sa = suitOrder.indexOf(a.suit), sb = suitOrder.indexOf(b.suit);
+              if (sa !== sb) return sa - sb;
+              return RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank);
+            });
+          const trumpCards = sortedHand
+            .filter(card => isTrump(card, game.trumpSuit, game.trumpNumber))
+            .sort((a, b) => trumpRank(a, game.trumpSuit, game.trumpNumber) - trumpRank(b, game.trumpSuit, game.trumpNumber));
           const rows = [];
           if (nonTrump.length) rows.push({ label: 'Non-Trump', cards: nonTrump, color: TEXT });
           if (trumpCards.length) rows.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
