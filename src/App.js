@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, createRoom, joinRoom, updateRoom as updateRoomRemote, subscribeToRoom } from './supabase';
 import {
-  buildDecks, dealCards, dealCardsSequential, isTrump, trumpRank, suitRank,
-  detectCombo, trickWinner, countPoints, cardPoints,
-  attackerLevelGain, defenderLevelGain, kittyMultiplier,
-  canDeclareTrump, getTrumpSuitFromDeclaration, validateFollow,
-  findChallenger, decomposeCombo, LEVELS, SUITS, RANKS
-} from './gameLogic';
+  Deck, TrumpRules, Trick, FollowValidator, BigPlay, Scoring, TrumpDeclaration,
+  LEVELS, RANKS
+} from './game';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const GOLD = '#c9a140';
@@ -453,8 +450,7 @@ const updateRoom = async (roomId, updates) => {
     if (normalizedPlayers.some((p, i) => p.seat !== room.players[i]?.seat)) {
       await updateRoom(room.id, { players: normalizedPlayers });
     }
-    const decks = buildDecks();
-    const { sequence, kitty } = dealCardsSequential(decks, 0); // round 1 always starts from seat 0
+    const { sequence, kitty } = new Deck().dealSequential(0); // round 1 always starts from seat 0
     const initialGame = {
       phase: 'dealing',
       hands: [[], [], [], []],
@@ -509,17 +505,20 @@ const updateRoom = async (roomId, updates) => {
       const totalCards = newHands.reduce((s, h) => s + h.length, 0);
 
       if (totalCards === 0) {
-        const kittyPts = countPoints(g.kitty || []);
+        const kittyPts = Scoring.countPoints(g.kitty || []);
         const lastWinnerTeam = winner % 2;
-        const mult = kittyMultiplier(
-          (newTricks[newTricks.length - 1]?.plays || []).flatMap(p => p.cards),
-          g.trumpSuit, g.trumpNumber
+        // Multiplier comes from the cards that WON the last trick, not all four plays.
+        const lastPlays = newTricks[newTricks.length - 1]?.plays || [];
+        const winningPlay = lastPlays.find(p => p.playerIdx === winner) || lastPlays[0];
+        const mult = Scoring.kittyMultiplier(
+          winningPlay?.cards || [],
+          new TrumpRules(g.trumpSuit, g.trumpNumber)
         );
         const finalScores = [...newScores];
         finalScores[lastWinnerTeam] += kittyPts * mult;
         const defScore = finalScores[1 - g.attackingTeam];
-        const atkGain = attackerLevelGain(defScore);
-        const defGain = defenderLevelGain(defScore);
+        const atkGain = Scoring.attackerLevelGain(defScore);
+        const defGain = Scoring.defenderLevelGain(defScore);
         await updateRoom(room.id, { game: { ...g, currentTrick: [], scores: finalScores,
           phase: 'round_end',
           roundResult: { defScore, atkGain, defGain, kittyPts, kittyMult: mult },
@@ -758,7 +757,7 @@ const updateRoom = async (roomId, updates) => {
 
     const allJokers = declSelected.every(c => c.suit === 'JOKER');
     const existingDecl = g.trumpDeclaration;
-    const newSuit = getTrumpSuitFromDeclaration(declSelected);
+    const newSuit = TrumpDeclaration.trumpSuitOf(declSelected);
     const declName = room.players.find(p => p.seat === mySeat)?.name || `Seat ${mySeat+1}`;
     const currentCount = existingDecl ? (existingDecl.declarationCount || existingDecl.cards?.length || 1) : 0;
     const iAmDeclarer = existingDecl?.playerIdx === mySeat;
@@ -884,15 +883,16 @@ const updateRoom = async (roomId, updates) => {
     const freshSelected = myCurrentHand.filter(card => selectedIds.includes(card.id));
     if (freshSelected.length === 0) return setError('Selected cards not found in hand');
 
-    const combo = detectCombo(freshSelected, g.trumpSuit, g.trumpNumber);
+    const rules = new TrumpRules(g.trumpSuit, g.trumpNumber);
+    const combo = rules.detectCombo(freshSelected);
     if (!combo.valid) return setError('Invalid combo');
 
     const isLeading = (g.currentTrick || []).length === 0;
 
     if (!isLeading) {
       const leadPlay = g.currentTrick[0];
-      const leadCombo = detectCombo(leadPlay.cards, g.trumpSuit, g.trumpNumber);
-      const followErr = validateFollow(freshSelected, myCurrentHand, { ...leadCombo, cards: leadPlay.cards }, g.trumpSuit, g.trumpNumber);
+      const leadCombo = rules.detectCombo(leadPlay.cards);
+      const followErr = new FollowValidator(rules).validate(freshSelected, myCurrentHand, { ...leadCombo, cards: leadPlay.cards });
       if (followErr) return setError(followErr);
     }
 
@@ -900,7 +900,7 @@ const updateRoom = async (roomId, updates) => {
     if (isLeading && freshSelected.length > 1) {
       const newHand = myCurrentHand.filter(card => !selectedIds.includes(card.id));
       const newHands = g.hands.map((h, i) => i === mySeat ? newHand : h);
-      const challengeResult = findChallenger(mySeat, newHands, freshSelected, g.trumpSuit, g.trumpNumber);
+      const challengeResult = new BigPlay(freshSelected, rules).findChallenger(mySeat, newHands);
       if (challengeResult) {
         const { challengerSeat, components, beatableComponents } = challengeResult;
         await updateRoom(room.id, {
@@ -971,8 +971,9 @@ const updateRoom = async (roomId, updates) => {
     let newGame = { ...g, hands: newHands, currentTrick: newTrick };
 
     if (newTrick.length === 4) {
-      const winner = trickWinner(newTrick, g.trumpSuit, g.trumpNumber);
-      const trickPoints = newTrick.flatMap(p => p.cards).reduce((s, c) => s + cardPoints(c), 0);
+      const trick = new Trick(newTrick, new TrumpRules(g.trumpSuit, g.trumpNumber));
+      const winner = trick.winner();
+      const trickPoints = trick.points();
       const winnerTeam = winner % 2;
       const newScores = [...(g.scores || [0,0])];
       newScores[winnerTeam] += trickPoints;
@@ -1009,7 +1010,6 @@ const updateRoom = async (roomId, updates) => {
       );
     }
 
-    const decks = buildDecks();
     // Compute next kitty holder BEFORE dealing so we can pass it as startSeat
     // Win (defenders scored ≥120): defenders now attack, kitty → partner of prev holder
     // Loss (attackers win again): kitty → next seat clockwise from prev holder
@@ -1018,7 +1018,7 @@ const updateRoom = async (roomId, updates) => {
     const nextKittyHolder = defendersWon
       ? (prevKittyHolder + 2) % 4  // partner of previous kitty holder
       : (prevKittyHolder + 1) % 4; // immediately next clockwise
-    const { sequence, kitty } = dealCardsSequential(decks, nextKittyHolder);
+    const { sequence, kitty } = new Deck().dealSequential(nextKittyHolder);
 
     const initialGame = {
       phase: 'dealing',
@@ -1049,18 +1049,10 @@ const updateRoom = async (roomId, updates) => {
 
   
   const SUIT_ORDER = ['♠', '♥', '♣', '♦'];
+  const handRules = game ? new TrumpRules(game.trumpSuit, game.trumpNumber) : null;
   const sortedHand = [...(myHand || [])].sort((a, b) => {
-    if (!game) return 0;
-    const aTrump = isTrump(a, game.trumpSuit, game.trumpNumber);
-    const bTrump = isTrump(b, game.trumpSuit, game.trumpNumber);
-    if (!aTrump && !bTrump) {
-      const sd = SUIT_ORDER.indexOf(a.suit) - SUIT_ORDER.indexOf(b.suit);
-      if (sd !== 0) return sd;
-      return suitRank(a) - suitRank(b);
-    }
-    if (!aTrump && bTrump) return -1;
-    if (aTrump && !bTrump) return 1;
-    return trumpRank(a, game.trumpSuit, game.trumpNumber) - trumpRank(b, game.trumpSuit, game.trumpNumber);
+    if (!handRules) return 0;
+    return handRules.compareForHand(a, b, SUIT_ORDER);
   });
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -1488,7 +1480,7 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
         {/* Group hand by suit */}
         {(() => {
           const nonTrump = sortedHand
-            .filter(card => !isTrump(card, game.trumpSuit, game.trumpNumber))
+            .filter(card => !handRules.isTrump(card))
             .sort((a, b) => {
               // Sort by suit group first, then by rank numerically within suit
               const suitOrder = ['♠','♥','♦','♣'].filter(s => s !== game.trumpSuit);
@@ -1497,8 +1489,8 @@ function GameScreen({ game, room, mySeat, myTeam, sortedHand, selectedIds, toggl
               return RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank);
             });
           const trumpCards = sortedHand
-            .filter(card => isTrump(card, game.trumpSuit, game.trumpNumber))
-            .sort((a, b) => trumpRank(a, game.trumpSuit, game.trumpNumber) - trumpRank(b, game.trumpSuit, game.trumpNumber));
+            .filter(card => handRules.isTrump(card))
+            .sort((a, b) => handRules.trumpRank(a) - handRules.trumpRank(b));
           const rows = [];
           if (nonTrump.length) rows.push({ label: 'Non-Trump', cards: nonTrump, color: TEXT });
           if (trumpCards.length) rows.push({ label: `Trump${game.trumpSuit ? ' '+game.trumpSuit : ''}`, cards: trumpCards, color: GOLD });
